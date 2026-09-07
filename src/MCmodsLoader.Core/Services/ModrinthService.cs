@@ -80,20 +80,11 @@ public class ModrinthService : IModrinthService
 
             string fileUrl = chosenFile.GetProperty("url").GetString()!;
             string filename = chosenFile.GetProperty("filename").GetString()!;
-            long size = chosenFile.GetProperty("size").GetInt64();
-            string? sha1 = null;
-            if (chosenFile.TryGetProperty("hashes", out var hashes) && hashes.TryGetProperty("sha1", out var sha1Prop))
-            {
-                sha1 = sha1Prop.GetString();
-            }
 
             return new ModrinthVersionFile
             {
                 Url = fileUrl,
                 Filename = filename,
-                Size = size,
-                Sha1 = sha1,
-                Primary = true
             };
         }
         catch

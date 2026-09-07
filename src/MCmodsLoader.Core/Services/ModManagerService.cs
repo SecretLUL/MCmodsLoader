@@ -17,7 +17,6 @@ public record ModInstallResult
 public interface IModManagerService
 {
     List<ModDefinition> ScanModsDirectory(string modsDirectory, IReadOnlyList<ModDefinition>? template = null);
-    Task PrepareModrinthMetadataAsync(string mcVersion, List<ModDefinition> mods, IProgress<string>? progress = null);
     Task<ModInstallResult> InstallOrUpdateModsAsync(string modsDirectory, string mcVersion, List<ModDefinition> mods, IProgress<string>? statusProgress = null, IProgress<double>? percentageProgress = null, CancellationToken ct = default);
 }
 
@@ -92,7 +91,7 @@ public class ModManagerService : IModManagerService
         return mods;
     }
 
-    public async Task PrepareModrinthMetadataAsync(string mcVersion, List<ModDefinition> mods, IProgress<string>? progress = null)
+    private async Task PrepareModrinthMetadataAsync(string mcVersion, List<ModDefinition> mods, IProgress<string>? progress = null)
     {
         using var throttle = new SemaphoreSlim(4);
         int completed = 0;
@@ -107,7 +106,6 @@ public class ModManagerService : IModManagerService
                 {
                     mod.DownloadUrl = versionFile.Url;
                     mod.TargetVersionNumber = versionFile.Filename;
-                    mod.FileSize = versionFile.Size;
 
                     if (mod.IsInstalled)
                     {

@@ -9,7 +9,6 @@ namespace MCmodsLoader.Core.Services;
 public interface IFabricService
 {
     Task<FabricStatus> CheckFabricStatusAsync(string minecraftPath, string mcVersion);
-    Task<string?> GetLatestLoaderVersionAsync(string mcVersion);
     Task<bool> InstallFabricAsync(string minecraftPath, string mcVersion, IProgress<string>? progress = null);
 }
 
@@ -27,7 +26,12 @@ public class FabricService : IFabricService
         }
     }
 
-    public async Task<FabricStatus> CheckFabricStatusAsync(string minecraftPath, string mcVersion)
+    /// <summary>
+    /// Reads the installed Fabric loader for a game version straight off disk. It used
+    /// to query meta.fabricmc.net for the newest loader as well, but nothing ever read
+    /// that answer, so the status check no longer touches the network.
+    /// </summary>
+    public Task<FabricStatus> CheckFabricStatusAsync(string minecraftPath, string mcVersion)
     {
         string? installedLoaderVersion = null;
         string? profileName = null;
@@ -104,24 +108,17 @@ public class FabricService : IFabricService
             }
         }
 
-        string? latestLoader = await GetLatestLoaderVersionAsync(mcVersion);
-
         bool isInstalled = !string.IsNullOrEmpty(installedLoaderVersion);
-        string description = isInstalled
-            ? $"Fabric Loader {installedLoaderVersion} is installed"
-            : (latestLoader != null ? $"Not installed (Latest available: {latestLoader})" : "Not installed");
 
-        return new FabricStatus
+        return Task.FromResult(new FabricStatus
         {
             IsInstalled = isInstalled,
             InstalledLoaderVersion = installedLoaderVersion,
             ProfileName = profileName ?? (isInstalled ? $"fabric-loader-{mcVersion}" : null),
-            LatestAvailableLoaderVersion = latestLoader,
-            StatusDescription = description
-        };
+        });
     }
 
-    public async Task<string?> GetLatestLoaderVersionAsync(string mcVersion)
+    private async Task<string?> GetLatestLoaderVersionAsync(string mcVersion)
     {
         try
         {

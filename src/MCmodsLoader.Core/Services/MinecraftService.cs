@@ -153,7 +153,10 @@ public class MinecraftService : IMinecraftService
                         if (profile.Value.TryGetProperty("lastVersionId", out var lastVerId))
                         {
                             string ver = lastVerId.GetString() ?? "";
-                            if (!string.IsNullOrWhiteSpace(ver) && !ver.Equals("latest-release", StringComparison.OrdinalIgnoreCase) && !ver.Equals("latest-snapshot", StringComparison.OrdinalIgnoreCase))
+                            // The launcher's "latest-release" and "latest-snapshot"
+                            // placeholders need no special case: IsOfficialRelease
+                            // accepts only dot-separated digits, so both fall out.
+                            if (!string.IsNullOrWhiteSpace(ver))
                             {
                                 if (ver.StartsWith("fabric-loader-", StringComparison.OrdinalIgnoreCase))
                                 {
@@ -207,7 +210,6 @@ public class MinecraftService : IMinecraftService
                     result.Add(new MinecraftVersionInfo
                     {
                         VersionId = version,
-                        Type = "release",
                         IsInstalled = installed.Contains(version)
                     });
                 }
@@ -229,7 +231,6 @@ public class MinecraftService : IMinecraftService
                 result.Insert(0, new MinecraftVersionInfo
                 {
                     VersionId = inst,
-                    Type = "release",
                     IsInstalled = true
                 });
             }
@@ -244,7 +245,6 @@ public class MinecraftService : IMinecraftService
                 result.Add(new MinecraftVersionInfo
                 {
                     VersionId = fb,
-                    Type = "release",
                     IsInstalled = false
                 });
             }

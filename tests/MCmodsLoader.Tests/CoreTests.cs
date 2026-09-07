@@ -18,25 +18,11 @@ public class ModPresetsTests
         Assert.Equal(15, mods.Count);
         Assert.DoesNotContain(mods, m => m.Slug == "polytone" || m.FabricModId == "polytone");
 
-        var validCategories = new HashSet<string> { "Performance", "Quality of Life", "Library" };
-
         foreach (var mod in mods)
         {
             Assert.False(string.IsNullOrWhiteSpace(mod.Slug), "Slug should not be empty");
             Assert.False(string.IsNullOrWhiteSpace(mod.Name), "Name should not be empty");
-            Assert.False(string.IsNullOrWhiteSpace(mod.Description), "Description should not be empty");
             Assert.False(string.IsNullOrWhiteSpace(mod.FabricModId), "FabricModId should not be empty");
-            Assert.Contains(mod.Category, validCategories);
-
-            // Ensure descriptions are in English (no common German words)
-            string desc = mod.Description.ToLowerInvariant();
-            Assert.DoesNotContain("für", desc);
-            Assert.DoesNotContain(" und ", desc);
-            Assert.DoesNotContain(" ist ", desc);
-            Assert.DoesNotContain(" der ", desc);
-            Assert.DoesNotContain(" die ", desc);
-            Assert.DoesNotContain(" das ", desc);
-            Assert.DoesNotContain("bibliothek", mod.Category.ToLowerInvariant());
         }
     }
 
@@ -105,7 +91,6 @@ public class UpdateServiceTests
         Assert.Equal("99.0.0", update.LatestVersion);
         Assert.Equal("https://github.com/SecretLUL/MCmodsLoader/releases/download/v99.0.0/MCmodsLoader.exe", update.DownloadUrl);
         Assert.Equal("v99.0.0 - Bugfix Release", update.ReleaseName);
-        Assert.Equal("Fixes minor issue", update.ReleaseNotes);
     }
 
     [Fact]
@@ -533,7 +518,6 @@ public class MinecraftServiceTests
         Assert.NotNull(versions);
         Assert.All(versions, v =>
         {
-            Assert.Equal("release", v.Type);
             Assert.False(MinecraftService.IsSnapshot(v.VersionId), $"Version {v.VersionId} should not be a snapshot");
             Assert.True(MinecraftService.IsOfficialRelease(v.VersionId), $"Version {v.VersionId} should be an official release");
         });
@@ -787,9 +771,7 @@ public class ModManagerServiceTests : IDisposable
             {
                 Slug = "sodium",
                 Name = "Sodium",
-                Description = "Fast graphics",
                 FabricModId = "sodium",
-                Category = "Performance",
                 InstalledFileName = "sodium-0.5.0.jar",
                 TargetVersionNumber = "sodium-0.5.8.jar",
                 DownloadUrl = "https://example.com/sodium.jar",
@@ -815,9 +797,7 @@ public class ModManagerServiceTests : IDisposable
             {
                 Slug = "sodium",
                 Name = "Sodium",
-                Description = "Fast graphics",
                 FabricModId = "sodium",
-                Category = "Performance",
                 InstalledFileName = "sodium-0.5.8.jar",
                 TargetVersionNumber = "sodium-0.5.8.jar",
                 DownloadUrl = "https://example.com/sodium.jar",

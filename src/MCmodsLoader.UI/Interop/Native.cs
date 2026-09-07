@@ -46,7 +46,7 @@ internal static class Native
     public const uint ODS_SELECTED = 0x0001, ODS_DISABLED = 0x0004, ODS_FOCUS = 0x0010;
 
     // ---- DrawText flags --------------------------------------------------
-    public const uint DT_LEFT = 0x0, DT_CENTER = 0x1, DT_RIGHT = 0x2, DT_VCENTER = 0x4,
+    public const uint DT_LEFT = 0x0, DT_CENTER = 0x1, DT_VCENTER = 0x4,
                       DT_SINGLELINE = 0x20, DT_PATH_ELLIPSIS = 0x4000, DT_END_ELLIPSIS = 0x8000,
                       DT_NOPREFIX = 0x0800;
 
@@ -185,7 +185,6 @@ internal static class Native
     [DllImport("user32.dll")] public static extern bool TrackMouseEvent(ref TRACKMOUSEEVENT tme);
     [DllImport("user32.dll")] public static extern nint SetCapture(nint hwnd);
     [DllImport("user32.dll")] public static extern bool ReleaseCapture();
-    [DllImport("user32.dll")] public static extern bool ClientToScreen(nint hwnd, ref POINT point);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern nint LoadCursorW(nint instance, nint cursorName);

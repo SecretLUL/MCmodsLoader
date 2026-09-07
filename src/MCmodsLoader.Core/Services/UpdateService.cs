@@ -92,7 +92,6 @@ public class UpdateService : IUpdateService
             string tagName = root.TryGetProperty("tag_name", out var tag) ? tag.GetString() ?? "" : "";
             string cleanTag = tagName.Trim().TrimStart('v', 'V');
             string releaseName = root.TryGetProperty("name", out var nm) ? nm.GetString() ?? "" : "";
-            string body = root.TryGetProperty("body", out var bd) ? bd.GetString() ?? "" : "";
             string htmlUrl = root.TryGetProperty("html_url", out var hu) ? hu.GetString() ?? "" : "";
 
             string? exeDownloadUrl = null;
@@ -118,7 +117,6 @@ public class UpdateService : IUpdateService
                 HasUpdate = hasUpdate,
                 DownloadUrl = exeDownloadUrl,
                 ReleaseName = releaseName,
-                ReleaseNotes = body,
                 HtmlUrl = htmlUrl
             };
         }
