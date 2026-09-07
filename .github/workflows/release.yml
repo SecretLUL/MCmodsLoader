@@ -28,24 +28,29 @@ jobs:
       - name: Run Tests
         run: dotnet test --no-restore --configuration Release
 
-      - name: Publish Single-File Executable
+      - name: Publish NativeAOT Executable
         shell: pwsh
         run: |
           $rawRef = "${{ github.ref_name }}"
           $version = if ($rawRef -match '^v?(\d+\.\d+\.\d+.*)$') { $matches[1] } else { "1.0.0" }
-          Write-Host "Publishing MCmodsLoader version: $version with single-file compression..."
+
+          # The AOT link step shells out to vswhere.exe to find the MSVC linker, and
+          # vswhere is not on PATH by default.
+          $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
+          if (Test-Path $installer) { $env:PATH = "$installer;$env:PATH" }
+
+          Write-Host "Publishing MCmodsLoader version: $version as a native binary..."
           dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
             -c Release `
             -r win-x64 `
-            --self-contained true `
-            -p:PublishSingleFile=true `
-            -p:IncludeNativeLibrariesForSelfExtract=true `
-            -p:EnableCompressionInSingleFile=true `
             -p:Version=$version `
             -p:AssemblyVersion=$version `
             -p:FileVersion=$version `
             -p:InformationalVersion=$version `
             -o publish
+
+          $exe = Get-Item publish/MCmodsLoader.exe
+          Write-Host "Produced $($exe.Name): $([math]::Round($exe.Length / 1MB, 2)) MB"
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2

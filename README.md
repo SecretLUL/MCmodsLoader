@@ -29,7 +29,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 1. **Download** the latest `MCmodsLoader.exe` from [GitHub Releases](https://github.com/SecretLUL/MCmodsLoader/releases).
 2. **Launch** the program (no installation required).
 3. **Select your Minecraft version** (e.g. `1.21.4`, `1.21.1`, etc.).
-4. Click **`⚡ Inject Performance Mods`**.
+4. Click **`Inject Performance Mods`**.
 5. Open your official **Minecraft Launcher**, select the new **`fabric-loader`** profile, and enjoy high FPS!
 
 ---
@@ -60,7 +60,7 @@ MCmodsLoader comes pre-configured with 15 performance and quality-of-life mods:
 
 ## 🛠️ Architecture & Tech Stack
 
-* **Frontend:** WPF on **.NET 8 (Windows)** with an asynchronous dark-mode UI.
+* **Frontend:** A dark-mode UI drawn directly on Win32 (GDI), compiled ahead of time with **NativeAOT**. WPF was dropped because it cannot be trimmed, which forced a ~68 MB self-contained download; the AOT binary is ~6 MB and needs no .NET runtime installed.
 * **Core Engine:** `MCmodsLoader.Core`
   * `FabricService`: Probes local `launcher_profiles.json` and versions directory; runs the official Fabric CLI installer if Java is present, or falls back to direct Meta profile JSON registration.
   * `MinecraftService`: Automatically resolves `%APPDATA%\.minecraft`, detects installed versions, and retrieves game version manifests.
@@ -76,6 +76,9 @@ MCmodsLoader comes pre-configured with 15 performance and quality-of-life mods:
 ### Prerequisites
 * [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0)
 * Windows 10/11 (64-bit)
+* For publishing only: the **Desktop development with C++** workload (MSVC linker and
+  Windows SDK). NativeAOT links a native binary, so `dotnet build` and `dotnet test`
+  work without it, but `dotnet publish` does not.
 
 ### Clone & Build
 ```powershell
@@ -90,19 +93,21 @@ dotnet test
 dotnet build
 ```
 
-### Publish Single-File Executable
-To produce a standalone portable `.exe` for distribution:
+### Publish the Native Executable
+To produce the standalone portable `.exe` for distribution:
 ```powershell
+# The AOT link step shells out to vswhere.exe to locate the MSVC linker,
+# and vswhere is not on PATH by default.
+$env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:PATH"
+
 dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
   -c Release `
   -r win-x64 `
-  --self-contained true `
-  -p:PublishSingleFile=true `
-  -p:IncludeNativeLibrariesForSelfExtract=true `
-  -p:EnableCompressionInSingleFile=true `
   -o ./publish
 ```
-The output file `MCmodsLoader.exe` will be generated in `./publish`.
+`PublishAot` is set in the project file for any build with a runtime identifier, so no
+extra flags are needed. The output `./publish/MCmodsLoader.exe` is around 6 MB, runs on
+a machine with no .NET installed, and is the only file the release ships.
 
 ---
 

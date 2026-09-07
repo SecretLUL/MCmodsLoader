@@ -9,12 +9,33 @@
     <TargetFramework>net8.0-windows</TargetFramework>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <UseWPF>true</UseWPF>
     <AssemblyName>MCmodsLoader</AssemblyName>
     <AssemblyTitle>MCmodsLoader</AssemblyTitle>
     <Product>MCmodsLoader</Product>
     <Description>Zero-Setup Performance Injector for the Vanilla Launcher</Description>
     <Authors>SecretLUL</Authors>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <!--
+    The UI is drawn directly on Win32 rather than WPF, because WPF cannot be trimmed
+    (the SDK blocks PublishTrimmed with NETSDK1168) and a self-contained WPF build
+    therefore carries the whole ~161 MB WindowsDesktop runtime pack. NativeAOT
+    compiles only the code actually reachable from Main and emits a single native
+    binary with no runtime to ship: 68.3 MB -> ~6 MB.
+
+    MCmodsLoader.Core needs no AOT accommodations: it parses JSON with JsonDocument
+    rather than the reflection-based serializer, so nothing here is trim-unsafe.
+    Keep it that way - JsonSerializer.Deserialize<T> would need a source-generated
+    JsonSerializerContext to survive.
+  -->
+  <PropertyGroup Condition="'$(RuntimeIdentifier)' != ''">
+    <PublishAot>true</PublishAot>
+    <OptimizationPreference>Size</OptimizationPreference>
+    <InvariantGlobalization>true</InvariantGlobalization>
+    <EventSourceSupport>false</EventSourceSupport>
+    <MetadataUpdaterSupport>false</MetadataUpdaterSupport>
+    <HttpActivityPropagationSupport>false</HttpActivityPropagationSupport>
   </PropertyGroup>
 
 </Project>
