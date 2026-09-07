@@ -77,15 +77,19 @@ public class UpdateServiceTests
     [Fact]
     public async Task CheckForUpdateAsync_ParsesGitHubReleaseAndDetectsUpdate()
     {
+        // HasUpdate is measured against this build's own version, which the build
+        // resolves from the newest Git tag. The fixture therefore has to name a
+        // release far beyond anything that will ever ship, otherwise the test starts
+        // failing the moment the real version catches up with the number used here.
         var jsonResponse = @"{
-            ""tag_name"": ""v1.1.0"",
-            ""name"": ""v1.1.0 - Bugfix Release"",
+            ""tag_name"": ""v99.0.0"",
+            ""name"": ""v99.0.0 - Bugfix Release"",
             ""body"": ""Fixes minor issue"",
-            ""html_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/tag/v1.1.0"",
+            ""html_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/tag/v99.0.0"",
             ""assets"": [
                 {
                     ""name"": ""MCmodsLoader.exe"",
-                    ""browser_download_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/download/v1.1.0/MCmodsLoader.exe""
+                    ""browser_download_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/download/v99.0.0/MCmodsLoader.exe""
                 }
             ]
         }";
@@ -98,9 +102,9 @@ public class UpdateServiceTests
 
         Assert.NotNull(update);
         Assert.True(update.HasUpdate);
-        Assert.Equal("1.1.0", update.LatestVersion);
-        Assert.Equal("https://github.com/SecretLUL/MCmodsLoader/releases/download/v1.1.0/MCmodsLoader.exe", update.DownloadUrl);
-        Assert.Equal("v1.1.0 - Bugfix Release", update.ReleaseName);
+        Assert.Equal("99.0.0", update.LatestVersion);
+        Assert.Equal("https://github.com/SecretLUL/MCmodsLoader/releases/download/v99.0.0/MCmodsLoader.exe", update.DownloadUrl);
+        Assert.Equal("v99.0.0 - Bugfix Release", update.ReleaseName);
         Assert.Equal("Fixes minor issue", update.ReleaseNotes);
     }
 
