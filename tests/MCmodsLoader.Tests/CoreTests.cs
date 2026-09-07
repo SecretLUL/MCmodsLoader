@@ -70,6 +70,97 @@ public class UpdateServiceTests
         bool result = UpdateService.IsNewerVersion(latest, current);
         Assert.Equal(expected, result);
     }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_ParsesGitHubReleaseAndDetectsUpdate()
+    {
+        var jsonResponse = @"{
+            ""tag_name"": ""v1.1.0"",
+            ""name"": ""v1.1.0 - Bugfix Release"",
+            ""body"": ""Fixes minor issue"",
+            ""html_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/tag/v1.1.0"",
+            ""assets"": [
+                {
+                    ""name"": ""MCmodsLoader.exe"",
+                    ""browser_download_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/download/v1.1.0/MCmodsLoader.exe""
+                }
+            ]
+        }";
+
+        var handler = new MockHttpHandler(jsonResponse);
+        using var client = new HttpClient(handler);
+        var service = new UpdateService(client);
+
+        var update = await service.CheckForUpdateAsync("SecretLUL/MCmodsLoader");
+
+        Assert.NotNull(update);
+        Assert.True(update.HasUpdate);
+        Assert.Equal("1.1.0", update.LatestVersion);
+        Assert.Equal("https://github.com/SecretLUL/MCmodsLoader/releases/download/v1.1.0/MCmodsLoader.exe", update.DownloadUrl);
+        Assert.Equal("v1.1.0 - Bugfix Release", update.ReleaseName);
+        Assert.Equal("Fixes minor issue", update.ReleaseNotes);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_WhenCurrentIsUpToDate_HasUpdateIsFalse()
+    {
+        var jsonResponse = @"{
+            ""tag_name"": ""v1.0.0"",
+            ""name"": ""v1.0.0 Initial Release"",
+            ""assets"": [
+                {
+                    ""name"": ""MCmodsLoader.exe"",
+                    ""browser_download_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/download/v1.0.0/MCmodsLoader.exe""
+                }
+            ]
+        }";
+
+        var handler = new MockHttpHandler(jsonResponse);
+        using var client = new HttpClient(handler);
+        var service = new UpdateService(client);
+
+        var update = await service.CheckForUpdateAsync("SecretLUL/MCmodsLoader");
+
+        Assert.NotNull(update);
+        Assert.False(update.HasUpdate);
+        Assert.Equal("1.0.0", update.LatestVersion);
+    }
+
+    [Fact]
+    public async Task CheckForUpdateAsync_LiveGitHubRelease_ReturnsValidReleaseInfo()
+    {
+        using var client = new HttpClient();
+        var service = new UpdateService(client);
+        var update = await service.CheckForUpdateAsync("SecretLUL/MCmodsLoader");
+
+        Assert.NotNull(update);
+        Assert.Equal("1.0.0", update.LatestVersion);
+        Assert.False(update.HasUpdate);
+        Assert.NotNull(update.DownloadUrl);
+        Assert.EndsWith("MCmodsLoader.exe", update.DownloadUrl);
+        Assert.Contains("v1.0.0", update.DownloadUrl);
+    }
+}
+
+public class MockHttpHandler : HttpMessageHandler
+{
+    private readonly string _responseContent;
+    private readonly System.Net.HttpStatusCode _statusCode;
+
+    public MockHttpHandler(string responseContent, System.Net.HttpStatusCode statusCode = System.Net.HttpStatusCode.OK)
+    {
+        _responseContent = responseContent;
+        _statusCode = statusCode;
+    }
+
+    protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        var response = new HttpResponseMessage(_statusCode)
+        {
+            Content = new StringContent(_responseContent, Encoding.UTF8, "application/json")
+        };
+        return Task.FromResult(response);
+    }
 }
 
 public class MinecraftVersionComparerTests

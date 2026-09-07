@@ -15,24 +15,41 @@ public interface IUpdateService
 public class UpdateService : IUpdateService
 {
     private readonly HttpClient _httpClient;
+    private readonly string? _customCurrentVersion;
 
     public string CurrentVersion
     {
         get
         {
-            var version = Assembly.GetEntryAssembly()?.GetName().Version;
-            if (version != null)
+            if (!string.IsNullOrWhiteSpace(_customCurrentVersion))
+                return _customCurrentVersion;
+
+            var entryAssembly = Assembly.GetEntryAssembly();
+            if (entryAssembly != null && (entryAssembly.GetName().Name?.StartsWith("MCmodsLoader", StringComparison.OrdinalIgnoreCase) ?? false))
             {
-                int build = version.Build >= 0 ? version.Build : 0;
-                return $"{version.Major}.{version.Minor}.{build}";
+                var version = entryAssembly.GetName().Version;
+                if (version != null)
+                {
+                    int build = version.Build >= 0 ? version.Build : 0;
+                    return $"{version.Major}.{version.Minor}.{build}";
+                }
             }
+
+            var coreVersion = typeof(UpdateService).Assembly.GetName().Version;
+            if (coreVersion != null && coreVersion.Major > 0)
+            {
+                int build = coreVersion.Build >= 0 ? coreVersion.Build : 0;
+                return $"{coreVersion.Major}.{coreVersion.Minor}.{build}";
+            }
+
             return "1.0.0";
         }
     }
 
-    public UpdateService(HttpClient? httpClient = null)
+    public UpdateService(HttpClient? httpClient = null, string? currentVersion = null)
     {
         _httpClient = httpClient ?? new HttpClient();
+        _customCurrentVersion = currentVersion;
         if (!_httpClient.DefaultRequestHeaders.Contains("User-Agent"))
         {
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "SecretLUL/MCmodsLoader (github.com/SecretLUL/MCmodsLoader)");
