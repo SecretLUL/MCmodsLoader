@@ -1,4 +1,5 @@
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using MCmodsLoader.Core.Models;
 using MCmodsLoader.Core.Utils;
 
@@ -24,6 +25,49 @@ public class MinecraftService : IMinecraftService
         {
             _httpClient.DefaultRequestHeaders.Add("User-Agent", "SecretLUL/MCmodsLoader (github.com/SecretLUL/MCmodsLoader)");
         }
+    }
+
+    /// <summary>
+    /// Checks whether a Minecraft version string represents a snapshot, pre-release, release candidate, or test build.
+    /// </summary>
+    public static bool IsSnapshot(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return false;
+
+        string v = version.Trim().ToLowerInvariant();
+
+        if (v.Contains("snapshot") ||
+            v.Contains("-rc") || v.Contains(".rc") || v.Contains(" rc") ||
+            v.Contains("-pre") || v.Contains(".pre") || v.Contains(" pre") ||
+            v.Contains("beta") || v.Contains("alpha") || v.Contains("experimental") ||
+            v.Contains("combat") || v.Contains("unobfuscated") || v.Contains("potato") ||
+            v.Contains("shareware") || v.Contains("infdev") || v.Contains("rd-"))
+        {
+            return true;
+        }
+
+        if (Regex.IsMatch(v, @"^\d{2}w\d{2}[a-z]"))
+        {
+            return true;
+        }
+
+        return false;
+    }
+
+    /// <summary>
+    /// Checks whether a Minecraft version string represents an official release (e.g. 1.21.4, 26.2, 26.1.2).
+    /// </summary>
+    public static bool IsOfficialRelease(string version)
+    {
+        if (string.IsNullOrWhiteSpace(version))
+            return false;
+
+        if (IsSnapshot(version))
+            return false;
+
+        // Official releases in Minecraft strictly follow the format: digits separated by dots (e.g., 1.21.4, 26.2, 26.1)
+        return Regex.IsMatch(version.Trim(), @"^\d+(\.\d+)+$");
     }
 
     public string GetDefaultMinecraftDirectory()
@@ -79,15 +123,15 @@ public class MinecraftService : IMinecraftService
                     if (parts.Length >= 4)
                     {
                         string gameVer = string.Join("-", parts.Skip(3));
-                        if (!string.IsNullOrWhiteSpace(gameVer))
+                        if (!string.IsNullOrWhiteSpace(gameVer) && IsOfficialRelease(gameVer))
                             versions.Add(gameVer);
                     }
                 }
                 else
                 {
-                    // Check if contains version json
+                    // Check if contains version json and is an official release
                     string jsonFile = Path.Combine(dir, $"{dirName}.json");
-                    if (File.Exists(jsonFile))
+                    if (File.Exists(jsonFile) && IsOfficialRelease(dirName))
                     {
                         versions.Add(dirName);
                     }
@@ -117,11 +161,11 @@ public class MinecraftService : IMinecraftService
                                     if (parts.Length >= 4)
                                     {
                                         string gameVer = string.Join("-", parts.Skip(3));
-                                        if (!string.IsNullOrWhiteSpace(gameVer))
+                                        if (!string.IsNullOrWhiteSpace(gameVer) && IsOfficialRelease(gameVer))
                                             versions.Add(gameVer);
                                     }
                                 }
-                                else
+                                else if (IsOfficialRelease(ver))
                                 {
                                     versions.Add(ver);
                                 }
@@ -155,15 +199,17 @@ public class MinecraftService : IMinecraftService
                 {
                     string version = el.GetProperty("version").GetString() ?? "";
                     bool stable = el.TryGetProperty("stable", out var s) && s.GetBoolean();
-                    if (!string.IsNullOrEmpty(version))
+                    
+                    // Only include official releases (exclude snapshots, pre-releases, and test builds)
+                    if (!stable || string.IsNullOrEmpty(version) || !IsOfficialRelease(version))
+                        continue;
+
+                    result.Add(new MinecraftVersionInfo
                     {
-                        result.Add(new MinecraftVersionInfo
-                        {
-                            VersionId = version,
-                            Type = stable ? "release" : "snapshot",
-                            IsInstalled = installed.Contains(version)
-                        });
-                    }
+                        VersionId = version,
+                        Type = "release",
+                        IsInstalled = installed.Contains(version)
+                    });
                 }
             }
         }
@@ -172,9 +218,12 @@ public class MinecraftService : IMinecraftService
             // If offline or request fails, fall back to installed versions
         }
 
-        // Add any installed version that wasn't in the API list
+        // Add any installed version that wasn't in the API list (only official releases)
         foreach (var inst in installed.OrderByDescending(v => v, MinecraftVersionComparer.Instance))
         {
+            if (!IsOfficialRelease(inst))
+                continue;
+
             if (!result.Any(r => r.VersionId.Equals(inst, StringComparison.OrdinalIgnoreCase)))
             {
                 result.Insert(0, new MinecraftVersionInfo
@@ -189,7 +238,7 @@ public class MinecraftService : IMinecraftService
         // If offline and no local versions found, supply common active versions
         if (result.Count == 0)
         {
-            string[] fallbackVersions = ["1.21.4", "1.21.1", "1.21", "1.20.4", "1.20.1", "1.19.4"];
+            string[] fallbackVersions = ["26.2", "26.1", "1.21.4", "1.21.1", "1.20.1"];
             foreach (var fb in fallbackVersions)
             {
                 result.Add(new MinecraftVersionInfo
@@ -204,7 +253,6 @@ public class MinecraftService : IMinecraftService
         // Order: Installed versions first, then maintain official API release ordering using MinecraftVersionComparer
         return result
             .OrderByDescending(v => v.IsInstalled)
-            .ThenByDescending(v => v.Type == "release")
             .ThenByDescending(v => v.VersionId, MinecraftVersionComparer.Instance)
             .ToList();
     }

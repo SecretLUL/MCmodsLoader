@@ -36,7 +36,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 
 ## 📦 Curated Modpack
 
-MCmodsLoader comes pre-configured with 16 performance and quality-of-life mods:
+MCmodsLoader comes pre-configured with 15 performance and quality-of-life mods:
 
 | Mod | Category | Purpose |
 | :--- | :--- | :--- |
@@ -51,7 +51,6 @@ MCmodsLoader comes pre-configured with 16 performance and quality-of-life mods:
 | **Xaero's Minimap** | Quality of Life | Lightweight, smooth in-game minimap with waypoint markers and entity radar. |
 | **Xaero's World Map** | Quality of Life | Fullscreen map showing all explored terrain and waypoints. |
 | **Mod Menu** | Quality of Life | In-game mod list and settings interface accessible right from the pause menu. |
-| **Polytone** | Quality of Life | Modern custom colors, biome color maps, and resource pack enhancements. |
 | **Fabric API** | Library | Essential core hooks required by virtually all modern Fabric mods. |
 | **Fabric Language Kotlin** | Library | Kotlin language adapter and runtime required by modern Kotlin-based mods. |
 | **YetAnotherConfigLib (YACL)** | Library | Configuration and GUI framework required by Zoomify and companion mods. |

@@ -93,14 +93,6 @@ public static class ModPresets
             },
             new()
             {
-                Slug = "polytone",
-                Name = "Polytone",
-                Description = "Extended custom color and resource pack visual enhancements.",
-                FabricModId = "polytone",
-                Category = "Quality of Life"
-            },
-            new()
-            {
                 Slug = "lambdynamiclights",
                 Name = "LambDynamicLights",
                 Description = "Dynamic hand-held and entity lighting effects with high performance.",

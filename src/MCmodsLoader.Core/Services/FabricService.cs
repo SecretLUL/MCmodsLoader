@@ -75,7 +75,15 @@ public class FabricService : IFabricService
                             if (ver.StartsWith("fabric-loader-", StringComparison.OrdinalIgnoreCase) &&
                                 ver.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
                             {
-                                profileName = p.Name;
+                                if (p.Value.TryGetProperty("name", out var nameProp) && !string.IsNullOrWhiteSpace(nameProp.GetString()))
+                                {
+                                    profileName = nameProp.GetString();
+                                }
+                                else
+                                {
+                                    profileName = p.Name;
+                                }
+
                                 if (installedLoaderVersion == null)
                                 {
                                     string extracted = ver.Substring("fabric-loader-".Length, ver.Length - "fabric-loader-".Length - suffix.Length);
@@ -105,7 +113,7 @@ public class FabricService : IFabricService
         {
             IsInstalled = isInstalled,
             InstalledLoaderVersion = installedLoaderVersion,
-            ProfileName = profileName,
+            ProfileName = profileName ?? (isInstalled ? $"fabric-loader-{mcVersion}" : null),
             LatestAvailableLoaderVersion = latestLoader,
             StatusDescription = description
         };

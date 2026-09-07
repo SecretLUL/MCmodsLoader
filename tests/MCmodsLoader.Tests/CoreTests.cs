@@ -15,7 +15,8 @@ public class ModPresetsTests
     {
         var mods = ModPresets.GetDefaultFpsModPack();
         Assert.NotNull(mods);
-        Assert.Equal(16, mods.Count);
+        Assert.Equal(15, mods.Count);
+        Assert.DoesNotContain(mods, m => m.Slug == "polytone" || m.FabricModId == "polytone");
 
         var validCategories = new HashSet<string> { "Performance", "Quality of Life", "Library" };
 
@@ -439,6 +440,139 @@ public class MinecraftServiceTests
             }
         }
     }
+
+    [Theory]
+    [InlineData("1.21.4", false)]
+    [InlineData("1.21.1", false)]
+    [InlineData("26.2", false)]
+    [InlineData("26.1", false)]
+    [InlineData("26.1.2", false)]
+    [InlineData("1.21.11", false)]
+    [InlineData("1.14.4", false)]
+    [InlineData("26.3-snapshot-3", true)]
+    [InlineData("26.3-pre-2", true)]
+    [InlineData("26.1-rc-2", true)]
+    [InlineData("26.1-snapshot-1", true)]
+    [InlineData("24w14a", true)]
+    [InlineData("26w14a", true)]
+    [InlineData("1.21.11_unobfuscated", true)]
+    [InlineData("1.14 Pre-Release 1", true)]
+    [InlineData("1.18_experimental-snapshot-1", true)]
+    public void IsSnapshot_DetectsSnapshotsAccurately(string version, bool expectedSnapshot)
+    {
+        bool isSnap = MinecraftService.IsSnapshot(version);
+        Assert.Equal(expectedSnapshot, isSnap);
+    }
+
+    [Theory]
+    [InlineData("1.21.4", true)]
+    [InlineData("1.21.1", true)]
+    [InlineData("26.2", true)]
+    [InlineData("26.1", true)]
+    [InlineData("26.1.2", true)]
+    [InlineData("1.21.11", true)]
+    [InlineData("26.3-snapshot-3", false)]
+    [InlineData("26.3-pre-2", false)]
+    [InlineData("26.1-rc-2", false)]
+    [InlineData("24w14a", false)]
+    public void IsOfficialRelease_OnlyMatchesOfficialReleases(string version, bool expectedOfficial)
+    {
+        bool isOfficial = MinecraftService.IsOfficialRelease(version);
+        Assert.Equal(expectedOfficial, isOfficial);
+    }
+
+    [Fact]
+    public void GetInstalledVersions_ExcludesSnapshotsAndOrdersByVersionDescending()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"McInstTest_{Guid.NewGuid():N}");
+        try
+        {
+            string vDir = Path.Combine(tempDir, "versions");
+            Directory.CreateDirectory(vDir);
+
+            // Create fake version dirs: official and snapshots
+            Directory.CreateDirectory(Path.Combine(vDir, "26.2"));
+            File.WriteAllText(Path.Combine(vDir, "26.2", "26.2.json"), "{}");
+
+            Directory.CreateDirectory(Path.Combine(vDir, "26.1"));
+            File.WriteAllText(Path.Combine(vDir, "26.1", "26.1.json"), "{}");
+
+            Directory.CreateDirectory(Path.Combine(vDir, "26.3-snapshot-3"));
+            File.WriteAllText(Path.Combine(vDir, "26.3-snapshot-3", "26.3-snapshot-3.json"), "{}");
+
+            Directory.CreateDirectory(Path.Combine(vDir, "26.1-rc-2"));
+            File.WriteAllText(Path.Combine(vDir, "26.1-rc-2", "26.1-rc-2.json"), "{}");
+
+            Directory.CreateDirectory(Path.Combine(vDir, "fabric-loader-0.19.5-26.2"));
+            File.WriteAllText(Path.Combine(vDir, "fabric-loader-0.19.5-26.2", "fabric-loader-0.19.5-26.2.json"), "{}");
+
+            var service = new MinecraftService();
+            var versions = service.GetInstalledVersions(tempDir);
+
+            Assert.Contains("26.2", versions);
+            Assert.Contains("26.1", versions);
+            Assert.DoesNotContain("26.3-snapshot-3", versions);
+            Assert.DoesNotContain("26.1-rc-2", versions);
+            Assert.Equal("26.2", versions[0]);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+    }
+
+    [Fact]
+    public async Task GetAllAvailableVersionsAsync_ExcludesSnapshotsFromApi()
+    {
+        string mockApiResponse = @"[
+            { ""version"": ""26.3-pre-2"", ""stable"": false },
+            { ""version"": ""26.3-snapshot-3"", ""stable"": false },
+            { ""version"": ""26.2"", ""stable"": true },
+            { ""version"": ""26.1.2"", ""stable"": true },
+            { ""version"": ""26.1-rc-2"", ""stable"": false },
+            { ""version"": ""26.1"", ""stable"": true },
+            { ""version"": ""1.21.11"", ""stable"": true }
+        ]";
+
+        var handler = new MockHttpHandler(mockApiResponse);
+        using var client = new HttpClient(handler);
+        var service = new MinecraftService(client);
+
+        var versions = await service.GetAllAvailableVersionsAsync(Path.GetTempPath());
+
+        Assert.NotNull(versions);
+        Assert.All(versions, v =>
+        {
+            Assert.Equal("release", v.Type);
+            Assert.False(MinecraftService.IsSnapshot(v.VersionId), $"Version {v.VersionId} should not be a snapshot");
+            Assert.True(MinecraftService.IsOfficialRelease(v.VersionId), $"Version {v.VersionId} should be an official release");
+        });
+
+        Assert.Contains(versions, v => v.VersionId == "26.2");
+        Assert.Contains(versions, v => v.VersionId == "26.1.2");
+        Assert.Contains(versions, v => v.VersionId == "26.1");
+        Assert.DoesNotContain(versions, v => v.VersionId == "26.3-snapshot-3");
+        Assert.DoesNotContain(versions, v => v.VersionId == "26.3-pre-2");
+        Assert.DoesNotContain(versions, v => v.VersionId == "26.1-rc-2");
+    }
+
+    [Fact]
+    public void GetInstalledVersions_OnUserMachine_Returns262AsLatestRelease()
+    {
+        string userMc = @"C:\Users\AMMAR-PC\AppData\Roaming\.minecraft";
+        if (!Directory.Exists(userMc))
+            return;
+
+        var service = new MinecraftService();
+        var installed = service.GetInstalledVersions(userMc);
+
+        Assert.NotEmpty(installed);
+        Assert.Equal("26.2", installed[0]);
+        Assert.DoesNotContain(installed, v => v.Contains("snapshot") || v.Contains("pre") || v.Contains("rc"));
+    }
 }
 
 public class ModManagerServiceTests : IDisposable
@@ -467,7 +601,7 @@ public class ModManagerServiceTests : IDisposable
 
         var mods = manager.ScanModsDirectory(_tempDir);
 
-        Assert.Equal(16, mods.Count);
+        Assert.Equal(15, mods.Count);
         Assert.All(mods, m =>
         {
             Assert.Equal("Missing", m.Status);
@@ -505,7 +639,7 @@ public class ModManagerServiceTests : IDisposable
     }
 
     [Fact]
-    public void ScanModsDirectory_WithUserModsFolder_All16ModsAreDetected()
+    public void ScanModsDirectory_WithUserModsFolder_All15ModsAreDetected()
     {
         string userMods = @"C:\Users\AMMAR-PC\AppData\Roaming\.minecraft\mods";
         if (!Directory.Exists(userMods))
@@ -515,7 +649,8 @@ public class ModManagerServiceTests : IDisposable
         var manager = new ModManagerService(mockModrinth);
 
         var mods = manager.ScanModsDirectory(userMods);
-        Assert.Equal(16, mods.Count);
+        Assert.Equal(15, mods.Count);
+        Assert.DoesNotContain(mods, m => m.Slug == "polytone" || m.FabricModId == "polytone");
 
         var undetected = mods.Where(m => !m.IsInstalled).Select(m => $"{m.Name} (slug: {m.Slug}, id: {m.FabricModId})").ToList();
         Assert.True(undetected.Count == 0, $"The following mods were not detected in the user folder: {string.Join(", ", undetected)}");
@@ -668,5 +803,21 @@ public class FabricServiceTests : IDisposable
         Assert.Contains(versionId, json);
         Assert.Contains("-Xmx16G -XX:+CustomFlag", json);
         Assert.Contains("My Custom Fabric Profile", json);
+    }
+
+    [Fact]
+    public async Task CheckFabricStatusAsync_OnUserMachine_DetectsFabricFor262()
+    {
+        string userMc = @"C:\Users\AMMAR-PC\AppData\Roaming\.minecraft";
+        if (!Directory.Exists(userMc))
+            return;
+
+        using var client = new HttpClient();
+        var service = new FabricService(client);
+        var status = await service.CheckFabricStatusAsync(userMc, "26.2");
+
+        Assert.True(status.IsInstalled);
+        Assert.Equal("0.19.5", status.InstalledLoaderVersion);
+        Assert.False(string.IsNullOrWhiteSpace(status.ProfileName));
     }
 }

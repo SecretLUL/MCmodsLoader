@@ -90,7 +90,7 @@ public partial class MainWindow : Window
         }
         finally
         {
-            SetBusy(false, "Ready to inject mods.");
+            SetBusy(false);
         }
     }
 
@@ -108,14 +108,26 @@ public partial class MainWindow : Window
 
         // 1. Scan mods folder
         _currentMods = _modManagerService.ScanModsDirectory(modsDir);
-        ListMods.ItemsSource = null;
-        ListMods.ItemsSource = _currentMods;
 
         int installedCount = _currentMods.Count(m => m.IsInstalled);
         TxtModCount.Text = $"{installedCount} / {_currentMods.Count} Installed";
         TxtModCount.Foreground = installedCount == _currentMods.Count
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#34D399"))
             : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FBBF24"));
+
+        if (!_isBusy)
+        {
+            if (installedCount == _currentMods.Count)
+            {
+                TxtStatus.Text = "All performance mods ready!";
+                TxtSubStatus.Text = $"{installedCount} of {_currentMods.Count} curated FPS mods are installed and up to date.";
+            }
+            else
+            {
+                TxtStatus.Text = "Ready to inject mods.";
+                TxtSubStatus.Text = $"Click 'Inject Performance Mods' to install Fabric (if missing) and {(_currentMods.Count - installedCount)} missing FPS mod(s).";
+            }
+        }
 
         // 2. Check Fabric status
         try
