@@ -250,10 +250,9 @@ public class MinecraftService : IMinecraftService
             }
         }
 
-        // Order: Installed versions first, then maintain official API release ordering using MinecraftVersionComparer
+        // Order: Maintain official release ordering descending using MinecraftVersionComparer
         return result
-            .OrderByDescending(v => v.IsInstalled)
-            .ThenByDescending(v => v.VersionId, MinecraftVersionComparer.Instance)
+            .OrderByDescending(v => v.VersionId, MinecraftVersionComparer.Instance)
             .ToList();
     }
 }

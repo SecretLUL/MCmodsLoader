@@ -58,10 +58,12 @@ public partial class MainWindow : Window
     {
         SetBusy(true, "Detecting installed Minecraft versions...");
 
+        string? versionToSelect = null;
         try
         {
             var versions = await _minecraftService.GetAllAvailableVersionsAsync(_minecraftPath);
 
+            CmbVersions.SelectionChanged -= CmbVersions_SelectionChanged;
             CmbVersions.Items.Clear();
             foreach (var v in versions)
             {
@@ -77,10 +79,12 @@ public partial class MainWindow : Window
                 if (!string.IsNullOrEmpty(defaultVersion) && CmbVersions.Items.Contains(defaultVersion))
                 {
                     CmbVersions.SelectedItem = defaultVersion;
+                    versionToSelect = defaultVersion;
                 }
                 else
                 {
                     CmbVersions.SelectedIndex = 0;
+                    versionToSelect = CmbVersions.Items[0] as string;
                 }
             }
         }
@@ -90,7 +94,13 @@ public partial class MainWindow : Window
         }
         finally
         {
+            CmbVersions.SelectionChanged += CmbVersions_SelectionChanged;
             SetBusy(false);
+        }
+
+        if (!string.IsNullOrEmpty(versionToSelect))
+        {
+            await RefreshAllAsync(versionToSelect);
         }
     }
 
@@ -102,7 +112,7 @@ public partial class MainWindow : Window
         }
     }
 
-    private async Task RefreshAllAsync(string mcVersion)
+    private async Task RefreshAllAsync(string mcVersion, bool updateStatusText = true)
     {
         string modsDir = _minecraftService.GetModsDirectory(_minecraftPath);
 
@@ -115,7 +125,7 @@ public partial class MainWindow : Window
             ? new SolidColorBrush((Color)ColorConverter.ConvertFromString("#34D399"))
             : new SolidColorBrush((Color)ColorConverter.ConvertFromString("#FBBF24"));
 
-        if (!_isBusy)
+        if (updateStatusText)
         {
             if (installedCount == _currentMods.Count)
             {
@@ -220,7 +230,7 @@ public partial class MainWindow : Window
                 pctProgress);
 
             // Step 3: Refresh UI list
-            await RefreshAllAsync(selectedVersion);
+            await RefreshAllAsync(selectedVersion, updateStatusText: false);
 
             PrgProgress.Value = 100;
             string profileNameToLaunch = fabricStatus.ProfileName ?? $"Fabric {selectedVersion}";
@@ -336,8 +346,14 @@ public partial class MainWindow : Window
         if (CmbVersions.SelectedItem is string selectedVersion)
         {
             SetBusy(true, "Refreshing mods and status...");
-            await RefreshAllAsync(selectedVersion);
-            SetBusy(false, "Refreshed successfully.");
+            try
+            {
+                await RefreshAllAsync(selectedVersion);
+            }
+            finally
+            {
+                SetBusy(false);
+            }
         }
     }
 

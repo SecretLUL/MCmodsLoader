@@ -6,19 +6,58 @@
         xmlns:local="clr-namespace:MCmodsLoader.UI"
         mc:Ignorable="d"
         Title="MCmodsLoader - Zero-Setup Performance Injector for the Vanilla Launcher"
-        Height="330" Width="840"
-        MinHeight="300" MinWidth="760"
+        SizeToContent="Height"
+        Width="840" MinWidth="760"
+        MinHeight="320"
+        ResizeMode="CanMinimize"
         WindowStartupLocation="CenterScreen"
         Background="#0F172A"
         Foreground="#F8FAFC"
         FontFamily="Segoe UI, Segoe UI Variable, sans-serif">
 
     <Window.Resources>
-        <!-- Modern ScrollBar Style -->
+        <!-- Modern Dark ScrollBar Thumb Style -->
+        <Style x:Key="ModernScrollBarThumb" TargetType="{x:Type Thumb}">
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type Thumb}">
+                        <Border CornerRadius="3" Background="#475569" Margin="1,0" x:Name="thumbBorder"/>
+                        <ControlTemplate.Triggers>
+                            <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="thumbBorder" Property="Background" Value="#64748B"/>
+                            </Trigger>
+                            <Trigger Property="IsDragging" Value="True">
+                                <Setter TargetName="thumbBorder" Property="Background" Value="#94A3B8"/>
+                            </Trigger>
+                        </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <!-- Modern Dark ScrollBar Style -->
         <Style TargetType="{x:Type ScrollBar}">
-            <Setter Property="Background" Value="Transparent"/>
-            <Setter Property="Foreground" Value="#475569"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/>
+            <Setter Property="OverridesDefaultStyle" Value="True"/>
             <Setter Property="Width" Value="8"/>
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="{x:Type ScrollBar}">
+                        <Grid Background="Transparent">
+                            <Track x:Name="PART_Track" IsDirectionReversed="True">
+                                <Track.Thumb>
+                                    <Thumb Style="{StaticResource ModernScrollBarThumb}"/>
+                                </Track.Thumb>
+                            </Track>
+                        </Grid>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
         </Style>
 
         <!-- Status Badge Template / Triggers -->
@@ -66,6 +105,7 @@
             <Setter Property="Background" Value="#1E293B"/>
             <Setter Property="Foreground" Value="#F8FAFC"/>
             <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBoxItem">
@@ -85,6 +125,14 @@
                                 <Setter Property="Foreground" Value="#34D399"/>
                                 <Setter Property="FontWeight" Value="SemiBold"/>
                             </Trigger>
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsSelected" Value="True"/>
+                                    <Condition Property="IsHighlighted" Value="True"/>
+                                </MultiTrigger.Conditions>
+                                <Setter TargetName="bd" Property="Background" Value="#047857"/>
+                                <Setter Property="Foreground" Value="#6EE7B7"/>
+                            </MultiTrigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter Property="Foreground" Value="#64748B"/>
                             </Trigger>
@@ -106,6 +154,7 @@
             <Setter Property="BorderThickness" Value="1"/>
             <Setter Property="Foreground" Value="#F8FAFC"/>
             <Setter Property="FontSize" Value="12"/>
+            <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBox">
@@ -125,7 +174,10 @@
                                               HorizontalAlignment="Left"
                                               VerticalAlignment="Center"
                                               Margin="10,0,28,0"
-                                              IsHitTestVisible="False"/>
+                                              IsHitTestVisible="False"
+                                              TextBlock.Foreground="#F8FAFC"
+                                              TextBlock.FontSize="12"
+                                              TextBlock.FontWeight="Medium"/>
                             <Popup x:Name="PART_Popup"
                                    AllowsTransparency="True"
                                    IsOpen="{Binding IsDropDownOpen, Mode=TwoWay, RelativeSource={RelativeSource TemplatedParent}}"
@@ -139,7 +191,11 @@
                                         Margin="0,2,0,0"
                                         MinWidth="{Binding ActualWidth, ElementName=templateRoot}"
                                         MaxHeight="220">
-                                    <ScrollViewer x:Name="DropDownScrollViewer" SnapsToDevicePixels="True">
+                                    <ScrollViewer x:Name="DropDownScrollViewer"
+                                                  SnapsToDevicePixels="True"
+                                                  CanContentScroll="{TemplateBinding ScrollViewer.CanContentScroll}"
+                                                  HorizontalScrollBarVisibility="{TemplateBinding ScrollViewer.HorizontalScrollBarVisibility}"
+                                                  VerticalScrollBarVisibility="{TemplateBinding ScrollViewer.VerticalScrollBarVisibility}">
                                         <ItemsPresenter x:Name="ItemsPresenter"
                                                         KeyboardNavigation.DirectionalNavigation="Contained"
                                                         SnapsToDevicePixels="{TemplateBinding SnapsToDevicePixels}"/>

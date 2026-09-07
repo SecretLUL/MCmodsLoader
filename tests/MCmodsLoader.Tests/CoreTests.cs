@@ -557,6 +557,12 @@ public class MinecraftServiceTests
         Assert.DoesNotContain(versions, v => v.VersionId == "26.3-snapshot-3");
         Assert.DoesNotContain(versions, v => v.VersionId == "26.3-pre-2");
         Assert.DoesNotContain(versions, v => v.VersionId == "26.1-rc-2");
+
+        // Verify strictly descending version ordering
+        Assert.Equal("26.2", versions[0].VersionId);
+        Assert.Equal("26.1.2", versions[1].VersionId);
+        Assert.Equal("26.1", versions[2].VersionId);
+        Assert.Equal("1.21.11", versions[3].VersionId);
     }
 
     [Fact]
@@ -819,5 +825,38 @@ public class FabricServiceTests : IDisposable
         Assert.True(status.IsInstalled);
         Assert.Equal("0.19.5", status.InstalledLoaderVersion);
         Assert.False(string.IsNullOrWhiteSpace(status.ProfileName));
+    }
+
+    [Fact]
+    public async Task CheckFabricStatusAsync_OnUserMachine_DetectsFabricFor12111()
+    {
+        string userMc = @"C:\Users\AMMAR-PC\AppData\Roaming\.minecraft";
+        if (!Directory.Exists(userMc))
+            return;
+
+        using var client = new HttpClient();
+        var service = new FabricService(client);
+        var status = await service.CheckFabricStatusAsync(userMc, "1.21.11");
+
+        Assert.True(status.IsInstalled);
+        Assert.Equal("0.18.3", status.InstalledLoaderVersion);
+        Assert.False(string.IsNullOrWhiteSpace(status.ProfileName));
+    }
+
+    [Fact]
+    public async Task CheckFabricStatusAsync_WithMalformedDirectory_DoesNotThrow()
+    {
+        string versionsDir = Path.Combine(_tempDir, "versions");
+        Directory.CreateDirectory(versionsDir);
+
+        // Directory that matches prefix and suffix but has no loader version in between
+        Directory.CreateDirectory(Path.Combine(versionsDir, "fabric-loader-1.21.4"));
+
+        using var client = new HttpClient();
+        var service = new FabricService(client);
+
+        var status = await service.CheckFabricStatusAsync(_tempDir, "1.21.4");
+        Assert.NotNull(status);
+        Assert.False(status.IsInstalled);
     }
 }

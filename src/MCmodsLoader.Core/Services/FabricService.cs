@@ -42,7 +42,8 @@ public class FabricService : IFabricService
                 string dirName = Path.GetFileName(dir);
                 // Look for fabric-loader-<loaderVersion>-<mcVersion>
                 if (dirName.StartsWith("fabric-loader-", StringComparison.OrdinalIgnoreCase) &&
-                    dirName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                    dirName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
+                    dirName.Length >= "fabric-loader-".Length + suffix.Length + 1)
                 {
                     string extracted = dirName.Substring("fabric-loader-".Length, dirName.Length - "fabric-loader-".Length - suffix.Length);
                     if (!string.IsNullOrWhiteSpace(extracted))
@@ -73,7 +74,8 @@ public class FabricService : IFabricService
                         {
                             string ver = lastVer.GetString() ?? "";
                             if (ver.StartsWith("fabric-loader-", StringComparison.OrdinalIgnoreCase) &&
-                                ver.EndsWith(suffix, StringComparison.OrdinalIgnoreCase))
+                                ver.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
+                                ver.Length >= "fabric-loader-".Length + suffix.Length + 1)
                             {
                                 if (p.Value.TryGetProperty("name", out var nameProp) && !string.IsNullOrWhiteSpace(nameProp.GetString()))
                                 {
