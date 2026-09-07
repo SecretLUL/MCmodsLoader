@@ -14,7 +14,7 @@ namespace MCmodsLoader.UI;
 internal sealed partial class MainWindow
 {
     private const string ClassName = "MCmodsLoaderWindow";
-    private const string WindowTitle = "MCmodsLoader - Zero-Setup Performance Injector for the Vanilla Launcher";
+    private const string WindowTitle = "MCmodsLoader";
 
     // Design metrics, in 96-DPI units.
     private const int DesignWidth = 840;
@@ -337,6 +337,10 @@ internal sealed partial class MainWindow
             x -= btnGap;
         }
 
+        // A child window is visible from the moment it is created, so the update
+        // button has to be hidden while the banner is not there: it would otherwise
+        // sit unmoved at the top-left of the client area as a stray green dot.
+        Native.ShowWindow(_btnUpdateNow.Hwnd, _bannerVisible ? Native.SW_SHOW : Native.SW_HIDE);
         if (_bannerVisible)
         {
             int w = S(120), h = S(32);
@@ -362,6 +366,6 @@ internal sealed partial class MainWindow
         _rcProgress = Native.RECT.Xywh(_rcAction.Left + actionPad, _rcAction.Bottom - actionPad - S(10),
             _rcAction.Width - 2 * actionPad, S(10));
         Native.MoveWindow(_prgProgress, _rcProgress.Left, _rcProgress.Top, _rcProgress.Width, _rcProgress.Height, true);
-        Native.ShowWindow(_prgProgress, _progressVisible ? Native.SW_SHOW : 0);
+        Native.ShowWindow(_prgProgress, _progressVisible ? Native.SW_SHOW : Native.SW_HIDE);
     }
 }

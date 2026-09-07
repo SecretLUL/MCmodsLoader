@@ -512,7 +512,6 @@ internal sealed partial class MainWindow
         if (_bannerVisible == visible) return;
 
         _bannerVisible = visible;
-        Native.ShowWindow(_btnUpdateNow.Hwnd, visible ? Native.SW_SHOW : 0);
         Relayout();       // the window grows or shrinks by the banner's height
         Repaint();
     }
