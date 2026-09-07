@@ -1,0 +1,15 @@
+<Project>
+  <!-- Dynamically resolve version from Git tags across all projects if not specified -->
+  <Target Name="ResolveVersionFromGit" BeforeTargets="BeforeBuild;GetAssemblyVersion;GenerateAssemblyInfo" Condition="'$(Version)' == '' Or '$(Version)' == '1.0.0'">
+    <Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+      <Output TaskParameter="ConsoleOutput" PropertyName="RawGitTag" />
+    </Exec>
+    <PropertyGroup Condition="'$(RawGitTag)' != ''">
+      <ParsedGitVersion>$([System.Text.RegularExpressions.Regex]::Replace($(RawGitTag.Trim()), '^v', ''))</ParsedGitVersion>
+      <Version Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</Version>
+      <AssemblyVersion Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</AssemblyVersion>
+      <FileVersion Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</FileVersion>
+      <InformationalVersion Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</InformationalVersion>
+    </PropertyGroup>
+  </Target>
+</Project>

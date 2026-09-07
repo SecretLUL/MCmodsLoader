@@ -28,17 +28,17 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
+        _updateService = new UpdateService();
         var httpClient = new System.Net.Http.HttpClient
         {
             Timeout = TimeSpan.FromMinutes(10)
         };
-        httpClient.DefaultRequestHeaders.Add("User-Agent", "MCmodsLoader/1.0.0 (github.com/SecretLUL/MCmodsLoader)");
+        httpClient.DefaultRequestHeaders.Add("User-Agent", $"MCmodsLoader/{_updateService.CurrentVersion} (github.com/SecretLUL/MCmodsLoader)");
 
         _minecraftService = new MinecraftService(httpClient);
         _fabricService = new FabricService(httpClient);
         _modrinthService = new ModrinthService(httpClient);
         _modManagerService = new ModManagerService(_modrinthService);
-        _updateService = new UpdateService(httpClient);
 
         Loaded += MainWindow_Loaded;
     }

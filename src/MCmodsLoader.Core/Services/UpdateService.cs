@@ -27,22 +27,39 @@ public class UpdateService : IUpdateService
             var entryAssembly = Assembly.GetEntryAssembly();
             if (entryAssembly != null && (entryAssembly.GetName().Name?.StartsWith("MCmodsLoader", StringComparison.OrdinalIgnoreCase) ?? false))
             {
+                var infoVer = entryAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+                if (!string.IsNullOrWhiteSpace(infoVer))
+                {
+                    string clean = infoVer.Split('+')[0].Trim().TrimStart('v', 'V');
+                    if (Version.TryParse(clean, out _))
+                        return clean;
+                }
+
                 var version = entryAssembly.GetName().Version;
-                if (version != null)
+                if (version != null && (version.Major > 0 || version.Minor > 0 || version.Build > 0))
                 {
                     int build = version.Build >= 0 ? version.Build : 0;
                     return $"{version.Major}.{version.Minor}.{build}";
                 }
             }
 
-            var coreVersion = typeof(UpdateService).Assembly.GetName().Version;
-            if (coreVersion != null && coreVersion.Major > 0)
+            var coreAssembly = typeof(UpdateService).Assembly;
+            var coreInfoVer = coreAssembly.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion;
+            if (!string.IsNullOrWhiteSpace(coreInfoVer))
+            {
+                string clean = coreInfoVer.Split('+')[0].Trim().TrimStart('v', 'V');
+                if (Version.TryParse(clean, out _))
+                    return clean;
+            }
+
+            var coreVersion = coreAssembly.GetName().Version;
+            if (coreVersion != null && (coreVersion.Major > 0 || coreVersion.Minor > 0 || coreVersion.Build > 0))
             {
                 int build = coreVersion.Build >= 0 ? coreVersion.Build : 0;
                 return $"{coreVersion.Major}.{coreVersion.Minor}.{build}";
             }
 
-            return "1.0.0";
+            return "0.0.0";
         }
     }
 
