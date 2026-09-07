@@ -36,7 +36,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 
 ## 📦 Curated Modpack
 
-MCmodsLoader comes pre-configured with 14 performance and quality-of-life mods:
+MCmodsLoader comes pre-configured with 16 performance and quality-of-life mods:
 
 | Mod | Category | Purpose |
 | :--- | :--- | :--- |
@@ -44,6 +44,8 @@ MCmodsLoader comes pre-configured with 14 performance and quality-of-life mods:
 | **Lithium** | Performance | General-purpose optimization for physics, AI, chunk loading, and block ticking. |
 | **FerriteCore** | Performance | Memory usage optimizations that drastically cut down RAM consumption. |
 | **Entity Culling** | Performance | Skips rendering of hidden entities and tile entities for higher framerates. |
+| **ImmediatelyFast** | Performance | Accelerates immediate mode rendering, optimizing HUD, fonts, and particle rendering. |
+| **LambDynamicLights** | Quality of Life | Dynamic hand-held and entity lighting effects with high performance. |
 | **Zoomify** | Quality of Life | Smooth, highly configurable camera zoom with mouse wheel support. |
 | **AppleSkin** | Quality of Life | Displays food saturation, exhaustion levels, and potential health restoration in the HUD. |
 | **Xaero's Minimap** | Quality of Life | Lightweight, smooth in-game minimap with waypoint markers and entity radar. |
@@ -98,6 +100,7 @@ dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
   --self-contained true `
   -p:PublishSingleFile=true `
   -p:IncludeNativeLibrariesForSelfExtract=true `
+  -p:EnableCompressionInSingleFile=true `
   -o ./publish
 ```
 The output file `MCmodsLoader.exe` will be generated in `./publish`.

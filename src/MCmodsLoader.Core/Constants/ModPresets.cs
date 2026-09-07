@@ -41,6 +41,14 @@ public static class ModPresets
                 FabricModId = "entityculling",
                 Category = "Performance"
             },
+            new()
+            {
+                Slug = "immediatelyfast",
+                Name = "ImmediatelyFast",
+                Description = "Optimizes immediate mode rendering to speed up HUD, fonts, and particle rendering.",
+                FabricModId = "immediatelyfast",
+                Category = "Performance"
+            },
 
             // Quality of Life / HUD
             new()
@@ -89,6 +97,14 @@ public static class ModPresets
                 Name = "Polytone",
                 Description = "Extended custom color and resource pack visual enhancements.",
                 FabricModId = "polytone",
+                Category = "Quality of Life"
+            },
+            new()
+            {
+                Slug = "lambdynamiclights",
+                Name = "LambDynamicLights",
+                Description = "Dynamic hand-held and entity lighting effects with high performance.",
+                FabricModId = "lambdynlights",
                 Category = "Quality of Life"
             },
 

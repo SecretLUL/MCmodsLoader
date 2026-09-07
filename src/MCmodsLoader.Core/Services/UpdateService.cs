@@ -9,7 +9,7 @@ public interface IUpdateService
 {
     string CurrentVersion { get; }
     Task<AppUpdateInfo?> CheckForUpdateAsync(string githubRepo = "SecretLUL/MCmodsLoader");
-    Task<bool> DownloadAndApplyUpdateAsync(string downloadUrl, IProgress<double>? progress = null);
+    Task<bool> DownloadAndApplyUpdateAsync(string downloadUrl, IProgress<double>? progress = null, string? targetExePath = null, bool launchAndExit = true, bool startExecutable = true, int? processIdToWait = null);
 }
 
 public class UpdateService : IUpdateService
@@ -132,16 +132,24 @@ public class UpdateService : IUpdateService
         return string.Join(".", parts.Take(4));
     }
 
-    public async Task<bool> DownloadAndApplyUpdateAsync(string downloadUrl, IProgress<double>? progress = null)
+    public async Task<bool> DownloadAndApplyUpdateAsync(
+        string downloadUrl,
+        IProgress<double>? progress = null,
+        string? targetExePath = null,
+        bool launchAndExit = true,
+        bool startExecutable = true,
+        int? processIdToWait = null)
     {
+        string? newExePath = null;
         try
         {
-            string currentExePath = Process.GetCurrentProcess().MainModule?.FileName
+            string currentExePath = targetExePath
                 ?? Environment.ProcessPath
+                ?? Process.GetCurrentProcess().MainModule?.FileName
                 ?? Path.Combine(AppContext.BaseDirectory, "MCmodsLoader.exe");
 
             string currentDir = Path.GetDirectoryName(currentExePath) ?? AppContext.BaseDirectory;
-            string newExePath = Path.Combine(currentDir, "MCmodsLoader.new.exe");
+            newExePath = Path.Combine(currentDir, "MCmodsLoader.new.exe");
 
             // Download new exe
             using (var response = await _httpClient.GetAsync(downloadUrl, HttpCompletionOption.ResponseHeadersRead))
@@ -168,50 +176,74 @@ public class UpdateService : IUpdateService
             }
 
             // Create robust updater batch script with wait & retry loop
-            int pid = Environment.ProcessId;
+            int pid = processIdToWait ?? Environment.ProcessId;
             string updaterBat = Path.Combine(currentDir, "update_restart.bat");
-            string batContent = $@"@echo off
-setlocal enabledelayedexpansion
-echo Updating MCmodsLoader...
+            string launchSnippet = startExecutable ? $@"start """" ""{currentExePath}""" : "rem restart disabled in test mode";
+            string waitSnippet = pid > 0 ? $@"
+set WAIT_COUNT=0
 :WAIT_PID
 tasklist /FI ""PID eq {pid}"" 2>NUL | find /I ""{pid}"" >NUL
 if not errorlevel 1 (
-    timeout /t 1 /nobreak >nul
+    set /A WAIT_COUNT+=1
+    if !WAIT_COUNT! GEQ 15 (
+        taskkill /F /PID {pid} >nul 2>&1
+    )
+    ping 127.0.0.1 -n 2 >nul
     goto WAIT_PID
 )
-timeout /t 1 /nobreak >nul
+ping 127.0.0.1 -n 2 >nul
+" : "";
 
+            string batContent = $@"@echo off
+setlocal enabledelayedexpansion
+cd /d ""{currentDir}""
+echo Updating MCmodsLoader...
+{waitSnippet}
 set RETRY_COUNT=0
 :MOVE_RETRY
 move /Y ""{newExePath}"" ""{currentExePath}"" >nul 2>&1
 if exist ""{newExePath}"" (
     set /A RETRY_COUNT+=1
     if !RETRY_COUNT! LEQ 10 (
-        timeout /t 1 /nobreak >nul
+        ping 127.0.0.1 -n 2 >nul
         goto MOVE_RETRY
     )
 )
 
-start """" ""{currentExePath}""
+if not exist ""{newExePath}"" (
+    {launchSnippet}
+)
 del ""%~f0""
 ";
 
             await File.WriteAllTextAsync(updaterBat, batContent);
 
-            // Execute updater batch and exit
-            var psi = new ProcessStartInfo
+            if (launchAndExit)
             {
-                FileName = updaterBat,
-                UseShellExecute = true,
-                WindowStyle = ProcessWindowStyle.Hidden
-            };
+                var psi = new ProcessStartInfo
+                {
+                    FileName = updaterBat,
+                    UseShellExecute = true,
+                    WindowStyle = ProcessWindowStyle.Hidden,
+                    WorkingDirectory = currentDir
+                };
 
-            Process.Start(psi);
-            Environment.Exit(0);
+                Process.Start(psi);
+                Environment.Exit(0);
+            }
+
             return true;
         }
         catch
         {
+            try
+            {
+                if (!string.IsNullOrEmpty(newExePath) && File.Exists(newExePath))
+                {
+                    File.Delete(newExePath);
+                }
+            }
+            catch { }
             return false;
         }
     }

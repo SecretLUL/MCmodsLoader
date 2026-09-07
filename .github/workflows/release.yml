@@ -29,13 +29,22 @@ jobs:
         run: dotnet test --no-restore --configuration Release
 
       - name: Publish Single-File Executable
+        shell: pwsh
         run: |
+          $rawRef = "${{ github.ref_name }}"
+          $version = if ($rawRef -match '^v?(\d+\.\d+\.\d+.*)$') { $matches[1] } else { "1.0.0" }
+          Write-Host "Publishing MCmodsLoader version: $version with single-file compression..."
           dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
             -c Release `
             -r win-x64 `
             --self-contained true `
             -p:PublishSingleFile=true `
             -p:IncludeNativeLibrariesForSelfExtract=true `
+            -p:EnableCompressionInSingleFile=true `
+            -p:Version=$version `
+            -p:AssemblyVersion=$version `
+            -p:FileVersion=$version `
+            -p:InformationalVersion=$version `
             -o publish
 
       - name: Create Release and Upload Asset

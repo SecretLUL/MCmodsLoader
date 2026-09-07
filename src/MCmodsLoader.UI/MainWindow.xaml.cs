@@ -28,7 +28,10 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
 
-        var httpClient = new System.Net.Http.HttpClient();
+        var httpClient = new System.Net.Http.HttpClient
+        {
+            Timeout = TimeSpan.FromMinutes(10)
+        };
         httpClient.DefaultRequestHeaders.Add("User-Agent", "MCmodsLoader/1.0.0 (github.com/SecretLUL/MCmodsLoader)");
 
         _minecraftService = new MinecraftService(httpClient);
@@ -384,21 +387,32 @@ public partial class MainWindow : Window
         try
         {
             var update = await _updateService.CheckForUpdateAsync("SecretLUL/MCmodsLoader");
-            if (update != null && update.HasUpdate)
+            if (update != null)
             {
-                _availableUpdate = update;
-                BannerUpdate.Visibility = Visibility.Visible;
-                TxtUpdateTitle.Text = $"🎉 New update available: v{update.LatestVersion} (Current: v{update.CurrentVersion})";
-                TxtUpdateDetails.Text = string.IsNullOrWhiteSpace(update.ReleaseName)
-                    ? "A newer version of MCmodsLoader is available on GitHub."
-                    : update.ReleaseName;
+                if (update.HasUpdate)
+                {
+                    _availableUpdate = update;
+                    BannerUpdate.Visibility = Visibility.Visible;
+                    TxtUpdateTitle.Text = $"🎉 New update available: v{update.LatestVersion} (Current: v{update.CurrentVersion})";
+                    TxtUpdateDetails.Text = string.IsNullOrWhiteSpace(update.ReleaseName)
+                        ? "A newer version of MCmodsLoader is available on GitHub."
+                        : update.ReleaseName;
+                }
+                else
+                {
+                    BannerUpdate.Visibility = Visibility.Collapsed;
+                    if (manualCheck)
+                    {
+                        MessageBox.Show($"You are running the latest version (v{_updateService.CurrentVersion}).", "Up to Date", MessageBoxButton.OK, MessageBoxImage.Information);
+                    }
+                }
             }
             else
             {
                 BannerUpdate.Visibility = Visibility.Collapsed;
                 if (manualCheck)
                 {
-                    MessageBox.Show($"You are running the latest version (v{_updateService.CurrentVersion}).", "Up to Date", MessageBoxButton.OK, MessageBoxImage.Information);
+                    MessageBox.Show("Could not check for updates. Please verify your internet connection.", "Update Check", MessageBoxButton.OK, MessageBoxImage.Warning);
                 }
             }
         }
