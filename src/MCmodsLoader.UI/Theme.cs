@@ -34,6 +34,9 @@ internal sealed class Theme : IDisposable
     private readonly List<nint> _objects = new();
 
     public uint Dpi { get; }
+    public nint SmallIcon { get; }
+    public nint LargeIcon { get; }
+    public nint HeaderIcon { get; }
 
     public nint BackgroundBrush { get; }
     public nint CardBrush { get; }
@@ -54,6 +57,9 @@ internal sealed class Theme : IDisposable
     public Theme(uint dpi)
     {
         Dpi = dpi;
+        SmallIcon = AppIcon.Load(Scale(16));
+        LargeIcon = AppIcon.Load(Scale(32));
+        HeaderIcon = AppIcon.Load(Scale(34));
 
         BackgroundBrush = Track(Native.CreateSolidBrush(Background));
         CardBrush = Track(Native.CreateSolidBrush(Card));
@@ -97,6 +103,9 @@ internal sealed class Theme : IDisposable
 
     public void Dispose()
     {
+        Native.DestroyIcon(SmallIcon);
+        Native.DestroyIcon(LargeIcon);
+        Native.DestroyIcon(HeaderIcon);
         foreach (var o in _objects) Native.DeleteObject(o);
         _objects.Clear();
     }

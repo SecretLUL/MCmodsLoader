@@ -83,6 +83,7 @@ internal sealed partial class MainWindow
 
         UseDarkTitleBar();
         _theme = new Theme(Native.GetDpiForWindow(_hwnd));
+        ApplyWindowIcons();
         CreateControls();
         Relayout(center: true);
 
@@ -123,6 +124,13 @@ internal sealed partial class MainWindow
         int enabled = 1;
         // Fails harmlessly on builds older than Windows 10 20H1.
         Native.DwmSetWindowAttribute(_hwnd, Native.DWMWA_USE_IMMERSIVE_DARK_MODE, ref enabled, sizeof(int));
+    }
+
+    private void ApplyWindowIcons()
+    {
+        const uint WM_SETICON = 0x0080;
+        Native.SendMessageW(_hwnd, WM_SETICON, 0, _theme.SmallIcon);
+        Native.SendMessageW(_hwnd, WM_SETICON, 1, _theme.LargeIcon);
     }
 
     private void CreateControls()
@@ -224,6 +232,7 @@ internal sealed partial class MainWindow
     {
         _theme.Dispose();
         _theme = new Theme((uint)newDpi);
+        ApplyWindowIcons();
         _picker.UpdateTheme(_theme);
 
         var suggested = Marshal.PtrToStructure<Native.RECT>(suggestedRect);

@@ -147,6 +147,13 @@ internal static class Native
     }
 
     // ---- user32 ----------------------------------------------------------
+    [DllImport("user32.dll", SetLastError = true)]
+    public static extern nint CreateIconFromResourceEx(byte[] bits, uint size, bool icon,
+        uint version, int width, int height, uint flags);
+    [DllImport("user32.dll")] public static extern bool DestroyIcon(nint icon);
+    [DllImport("user32.dll")] public static extern bool DrawIconEx(nint dc, int x, int y,
+        nint icon, int width, int height, uint step, nint brush, uint flags);
+
     [DllImport("user32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
     public static extern ushort RegisterClassExW(ref WNDCLASSEX wc);
 

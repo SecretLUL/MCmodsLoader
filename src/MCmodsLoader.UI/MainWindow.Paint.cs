@@ -45,8 +45,11 @@ internal sealed partial class MainWindow
         int S(int v) => _theme.Scale(v);
 
         const string title = "MCmodsLoader";
+        int logoSize = S(34);
+        Native.DrawIconEx(dc, _rcHeader.Left, _rcHeader.Top + (_rcHeader.Height - logoSize) / 2,
+            _theme.HeaderIcon, logoSize, logoSize, 0, 0, 0x0003); // DI_NORMAL, including alpha.
         int titleW = Gdi.MeasureWidth(dc, title, _theme.FontHeading);
-        var titleRect = Native.RECT.Xywh(_rcHeader.Left, _rcHeader.Top, titleW, _rcHeader.Height);
+        var titleRect = Native.RECT.Xywh(_rcHeader.Left + logoSize + S(10), _rcHeader.Top, titleW, _rcHeader.Height);
         Gdi.Text(dc, title, titleRect, _theme.FontHeading, Theme.TextPrimary,
             Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE);
 

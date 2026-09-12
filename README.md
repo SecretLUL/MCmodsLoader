@@ -1,4 +1,6 @@
-# MCmodsLoader ⚡
+![MCmodsLoader – Minecraft. Faster. Simpler.](src/MCmodsLoader.UI/Assets/readme-banner.png)
+
+# MCmodsLoader
 
 > **Zero-Setup Performance Injector for the Vanilla Launcher**
 

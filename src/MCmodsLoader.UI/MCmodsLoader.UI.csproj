@@ -15,7 +15,12 @@
     <Description>Zero-Setup Performance Injector for the Vanilla Launcher</Description>
     <Authors>SecretLUL</Authors>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\app.ico</ApplicationIcon>
   </PropertyGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Assets\app.ico" LogicalName="MCmodsLoader.AppIcon" />
+  </ItemGroup>
 
   <!--
     The UI is drawn directly on Win32 rather than WPF, because WPF cannot be trimmed
