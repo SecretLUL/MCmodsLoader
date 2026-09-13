@@ -68,7 +68,8 @@ public class FabricService : IFabricService
             try
             {
                 var docOptions = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-                using var doc = JsonDocument.Parse(File.ReadAllText(profilesFile), docOptions);
+                using var stream = File.OpenRead(profilesFile);
+                using var doc = JsonDocument.Parse(stream, docOptions);
                 if (doc.RootElement.TryGetProperty("profiles", out var profiles))
                 {
                     string suffix = $"-{mcVersion}";
@@ -414,10 +415,14 @@ public class FabricService : IFabricService
 
             try
             {
-                string jsonText = File.ReadAllText(file);
-                var docOptions = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-                var node = JsonNode.Parse(jsonText, documentOptions: docOptions);
-                if (node is JsonObject rootObj)
+                JsonObject? rootObj;
+                using (var stream = File.OpenRead(file))
+                {
+                    var docOptions = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
+                    rootObj = JsonNode.Parse(stream, documentOptions: docOptions) as JsonObject;
+                }
+
+                if (rootObj is not null)
                 {
                     if (rootObj["profiles"] is not JsonObject profilesObj)
                     {

@@ -1,5 +1,3 @@
-using System.Text.RegularExpressions;
-
 namespace MCmodsLoader.Core.Utils;
 
 /// <summary>
@@ -83,11 +81,27 @@ public class MinecraftVersionComparer : IComparer<string>
 
     private static List<string> Tokenize(string version)
     {
+        var span = version.AsSpan().Trim();
         var tokens = new List<string>();
-        var matches = Regex.Matches(version.Trim(), @"([0-9]+|[a-zA-Z]+)");
-        foreach (Match m in matches)
+        int i = 0;
+        while (i < span.Length)
         {
-            tokens.Add(m.Value);
+            if (char.IsAsciiDigit(span[i]))
+            {
+                int start = i;
+                while (i < span.Length && char.IsAsciiDigit(span[i])) i++;
+                tokens.Add(span[start..i].ToString());
+            }
+            else if (char.IsAsciiLetter(span[i]))
+            {
+                int start = i;
+                while (i < span.Length && char.IsAsciiLetter(span[i])) i++;
+                tokens.Add(span[start..i].ToString());
+            }
+            else
+            {
+                i++;
+            }
         }
         return tokens;
     }

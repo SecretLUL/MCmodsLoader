@@ -2,15 +2,13 @@ using System.Text.RegularExpressions;
 
 namespace MCmodsLoader.Core.Utils;
 
-public static class ModCompatibilityChecker
+public static partial class ModCompatibilityChecker
 {
-    private static readonly Regex McExplicitRegex = new(
-        @"(?i)(?:[+\-_]mc|\+(?!kotlin))([0-9]+(?:\.[0-9]+)+)",
-        RegexOptions.Compiled);
+    [GeneratedRegex(@"(?i)(?:[+\-_]mc|\+(?!kotlin))([0-9]+(?:\.[0-9]+)+)")]
+    private static partial Regex McExplicitRegex();
 
-    private static readonly Regex McFabricInNameRegex = new(
-        @"(?i)-fabric-([0-9]+(?:\.[0-9]+)+)-",
-        RegexOptions.Compiled);
+    [GeneratedRegex(@"(?i)-fabric-([0-9]+(?:\.[0-9]+)+)-")]
+    private static partial Regex McFabricInNameRegex();
 
     public static bool IsCompatible(string? targetMcVersion, string? dependsMinecraft, string? modVersion, string? fileName)
     {
@@ -37,10 +35,10 @@ public static class ModCompatibilityChecker
     {
         if (string.IsNullOrWhiteSpace(text)) return null;
 
-        var m1 = McExplicitRegex.Match(text);
+        var m1 = McExplicitRegex().Match(text);
         if (m1.Success) return m1.Groups[1].Value;
 
-        var m2 = McFabricInNameRegex.Match(text);
+        var m2 = McFabricInNameRegex().Match(text);
         if (m2.Success) return m2.Groups[1].Value;
 
         return null;

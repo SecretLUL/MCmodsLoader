@@ -49,10 +49,14 @@ public class ModManagerService : IModManagerService
         var jarFiles = Directory.GetFiles(modsDirectory, "*.jar");
         var matchedJars = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // Pass 1: Parse fabric.mod.json inside each jar
-        foreach (var jar in jarFiles)
+        var jarMetas = new (string Jar, FabricModMetadata? Meta)[jarFiles.Length];
+        Parallel.For(0, jarFiles.Length, i =>
         {
-            var meta = JarInspector.ReadFabricModJson(jar);
+            jarMetas[i] = (jarFiles[i], JarInspector.ReadFabricModJson(jarFiles[i]));
+        });
+
+        foreach (var (jar, meta) in jarMetas)
+        {
             if (meta != null)
             {
                 var mod = mods.FirstOrDefault(m =>
@@ -175,10 +179,6 @@ public class ModManagerService : IModManagerService
         var toInstall = mods.Where(m => m.DownloadUrl != null && (!m.IsInstalled || m.Status == "Update available" || m.Status == "Missing" || m.Status.StartsWith("Incompatible"))).ToList();
         int alreadyUpToDate = mods.Count(m => m.IsInstalled && m.Status == "Up to date");
 
-        int installedCount = 0;
-        int failedCount = 0;
-        var failedList = new List<string>();
-
         if (toInstall.Count == 0)
         {
             statusProgress?.Report($"All {mods.Count} performance mods are already up to date!");
@@ -192,24 +192,28 @@ public class ModManagerService : IModManagerService
             };
         }
 
-        for (int i = 0; i < toInstall.Count; i++)
+        using var throttle = new SemaphoreSlim(3);
+        int completed = 0;
+        int installedCount = 0;
+        int failedCount = 0;
+        var failedList = new System.Collections.Concurrent.ConcurrentBag<string>();
+
+        var tasks = toInstall.Select(async mod =>
         {
-            ct.ThrowIfCancellationRequested();
-            var mod = toInstall[i];
-
-            statusProgress?.Report($"Downloading {mod.Name}... ({i + 1}/{toInstall.Count})");
-
+            await throttle.WaitAsync(ct);
             try
             {
+                ct.ThrowIfCancellationRequested();
+
                 if (string.IsNullOrEmpty(mod.DownloadUrl) || string.IsNullOrEmpty(mod.TargetVersionNumber))
                 {
                     var file = await _modrinthService.GetLatestVersionFileAsync(mod.Slug, mcVersion);
                     if (file == null)
                     {
-                        failedCount++;
+                        Interlocked.Increment(ref failedCount);
                         failedList.Add(mod.Name);
                         mod.Status = "Not available for this version";
-                        continue;
+                        return;
                     }
                     mod.DownloadUrl = file.Url;
                     mod.TargetVersionNumber = file.Filename;
@@ -217,10 +221,8 @@ public class ModManagerService : IModManagerService
 
                 string targetFilePath = Path.Combine(modsDirectory, mod.TargetVersionNumber);
 
-                // Download safely first before touching existing files
                 await _modrinthService.DownloadFileAsync(mod.DownloadUrl, targetFilePath, null, ct);
 
-                // After download succeeds, clean up any previous/conflicting version of this mod
                 if (!string.IsNullOrEmpty(mod.InstalledFileName) && !mod.InstalledFileName.Equals(mod.TargetVersionNumber, StringComparison.OrdinalIgnoreCase))
                 {
                     string oldPath = Path.Combine(modsDirectory, mod.InstalledFileName);
@@ -230,16 +232,21 @@ public class ModManagerService : IModManagerService
                     }
                 }
 
+                string idPrefixDash = mod.FabricModId.ToLowerInvariant() + "-";
+                string idPrefixUnderscore = mod.FabricModId.ToLowerInvariant() + "_";
+                string slugPrefixDash = mod.Slug.ToLowerInvariant() + "-";
+                string slugPrefixUnderscore = mod.Slug.ToLowerInvariant() + "_";
+
                 foreach (var existing in Directory.GetFiles(modsDirectory, "*.jar"))
                 {
                     if (existing.Equals(targetFilePath, StringComparison.OrdinalIgnoreCase))
                         continue;
 
                     string fn = Path.GetFileName(existing).ToLowerInvariant();
-                    if (fn.StartsWith(mod.FabricModId.ToLowerInvariant() + "-") ||
-                        fn.StartsWith(mod.Slug.ToLowerInvariant() + "-") ||
-                        fn.StartsWith(mod.FabricModId.ToLowerInvariant() + "_") ||
-                        fn.StartsWith(mod.Slug.ToLowerInvariant() + "_"))
+                    if (fn.StartsWith(idPrefixDash) ||
+                        fn.StartsWith(slugPrefixDash) ||
+                        fn.StartsWith(idPrefixUnderscore) ||
+                        fn.StartsWith(slugPrefixUnderscore))
                     {
                         try { File.Delete(existing); } catch { }
                     }
@@ -249,18 +256,25 @@ public class ModManagerService : IModManagerService
                 mod.InstalledVersion = "Latest";
                 mod.IsCompatible = true;
                 mod.Status = "Installed";
-                installedCount++;
+                Interlocked.Increment(ref installedCount);
             }
-            catch (Exception ex)
+            catch (Exception ex) when (ex is not OperationCanceledException)
             {
-                failedCount++;
+                Interlocked.Increment(ref failedCount);
                 failedList.Add(mod.Name);
                 mod.Status = $"Error: {ex.Message}";
             }
+            finally
+            {
+                throttle.Release();
+                int finished = Interlocked.Increment(ref completed);
+                double pct = (double)finished / toInstall.Count * 100.0;
+                percentageProgress?.Report(pct);
+                statusProgress?.Report($"Downloading {mod.Name}... ({finished}/{toInstall.Count})");
+            }
+        });
 
-            double pct = (double)(i + 1) / toInstall.Count * 100.0;
-            percentageProgress?.Report(pct);
-        }
+        await Task.WhenAll(tasks);
 
         statusProgress?.Report($"Injection complete: {installedCount} installed/updated, {alreadyUpToDate} already up to date, {failedCount} failed.");
         return new ModInstallResult
@@ -269,7 +283,7 @@ public class ModManagerService : IModManagerService
             AlreadyUpToDateCount = alreadyUpToDate,
             TotalCount = mods.Count,
             FailedCount = failedCount,
-            FailedModNames = failedList
+            FailedModNames = failedList.OrderBy(n => n).ToList()
         };
     }
 }

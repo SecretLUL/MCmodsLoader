@@ -14,9 +14,15 @@ public interface IMinecraftService
     Task<List<MinecraftVersionInfo>> GetAllAvailableVersionsAsync(string minecraftPath);
 }
 
-public class MinecraftService : IMinecraftService
+public partial class MinecraftService : IMinecraftService
 {
     private readonly HttpClient _httpClient;
+
+    [GeneratedRegex(@"^\d{2}w\d{2}[a-z]")]
+    private static partial Regex SnapshotYearWeekRegex();
+
+    [GeneratedRegex(@"^\d+(\.\d+)+$")]
+    private static partial Regex OfficialReleaseRegex();
 
     public MinecraftService(HttpClient? httpClient = null)
     {
@@ -47,7 +53,7 @@ public class MinecraftService : IMinecraftService
             return true;
         }
 
-        if (Regex.IsMatch(v, @"^\d{2}w\d{2}[a-z]"))
+        if (SnapshotYearWeekRegex().IsMatch(v))
         {
             return true;
         }
@@ -66,8 +72,7 @@ public class MinecraftService : IMinecraftService
         if (IsSnapshot(version))
             return false;
 
-        // Official releases in Minecraft strictly follow the format: digits separated by dots (e.g., 1.21.4, 26.2, 26.1)
-        return Regex.IsMatch(version.Trim(), @"^\d+(\.\d+)+$");
+        return OfficialReleaseRegex().IsMatch(version.Trim());
     }
 
     public string GetDefaultMinecraftDirectory()
@@ -145,7 +150,8 @@ public class MinecraftService : IMinecraftService
         {
             try
             {
-                using var doc = JsonDocument.Parse(File.ReadAllText(launcherProfilesPath));
+                using var stream = File.OpenRead(launcherProfilesPath);
+                using var doc = JsonDocument.Parse(stream);
                 if (doc.RootElement.TryGetProperty("profiles", out var profilesProp) && profilesProp.ValueKind == JsonValueKind.Object)
                 {
                     foreach (var profile in profilesProp.EnumerateObject())
