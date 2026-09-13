@@ -16,9 +16,39 @@ public class MinecraftVersionComparer : IComparer<string>
         if (x is null) return -1;
         if (y is null) return 1;
 
-        var tokensX = Tokenize(x);
-        var tokensY = Tokenize(y);
+        string xTrim = x.Trim();
+        string yTrim = y.Trim();
 
+        string xBase = xTrim;
+        string? xPre = null;
+        int xHyphen = xTrim.IndexOf('-');
+        if (xHyphen >= 0)
+        {
+            xBase = xTrim[..xHyphen];
+            xPre = xTrim[(xHyphen + 1)..];
+        }
+
+        string yBase = yTrim;
+        string? yPre = null;
+        int yHyphen = yTrim.IndexOf('-');
+        if (yHyphen >= 0)
+        {
+            yBase = yTrim[..yHyphen];
+            yPre = yTrim[(yHyphen + 1)..];
+        }
+
+        int baseCmp = CompareTokens(Tokenize(xBase), Tokenize(yBase));
+        if (baseCmp != 0) return baseCmp;
+
+        if (xPre == null && yPre != null) return 1;
+        if (xPre != null && yPre == null) return -1;
+        if (xPre == null && yPre == null) return 0;
+
+        return CompareTokens(Tokenize(xPre!), Tokenize(yPre!));
+    }
+
+    private static int CompareTokens(List<string> tokensX, List<string> tokensY)
+    {
         int minLen = Math.Min(tokensX.Count, tokensY.Count);
         for (int i = 0; i < minLen; i++)
         {
@@ -35,7 +65,6 @@ public class MinecraftVersionComparer : IComparer<string>
             }
             else if (isNumX && !isNumY)
             {
-                // A number is considered newer than a prerelease/qualifier text
                 return 1;
             }
             else if (!isNumX && isNumY)

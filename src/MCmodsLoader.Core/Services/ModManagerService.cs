@@ -16,7 +16,7 @@ public record ModInstallResult
 
 public interface IModManagerService
 {
-    List<ModDefinition> ScanModsDirectory(string modsDirectory, IReadOnlyList<ModDefinition>? template = null);
+    List<ModDefinition> ScanModsDirectory(string modsDirectory, IReadOnlyList<ModDefinition>? template = null, string? mcVersion = null);
     Task<ModInstallResult> InstallOrUpdateModsAsync(string modsDirectory, string mcVersion, List<ModDefinition> mods, IProgress<string>? statusProgress = null, IProgress<double>? percentageProgress = null, CancellationToken ct = default);
 }
 
@@ -29,13 +29,14 @@ public class ModManagerService : IModManagerService
         _modrinthService = modrinthService;
     }
 
-    public List<ModDefinition> ScanModsDirectory(string modsDirectory, IReadOnlyList<ModDefinition>? template = null)
+    public List<ModDefinition> ScanModsDirectory(string modsDirectory, IReadOnlyList<ModDefinition>? template = null, string? mcVersion = null)
     {
         var mods = (template ?? ModPresets.GetDefaultFpsModPack())
             .Select(m => m with
             {
                 InstalledFileName = null,
                 InstalledVersion = null,
+                IsCompatible = true,
                 Status = "Missing"
             })
             .ToList();
@@ -60,9 +61,12 @@ public class ModManagerService : IModManagerService
 
                 if (mod != null && mod.InstalledFileName == null)
                 {
+                    bool isCompatible = ModCompatibilityChecker.IsCompatible(mcVersion, meta.MinecraftDependency, meta.Version, Path.GetFileName(jar));
+
                     mod.InstalledFileName = Path.GetFileName(jar);
                     mod.InstalledVersion = meta.Version;
-                    mod.Status = "Installed";
+                    mod.IsCompatible = isCompatible;
+                    mod.Status = isCompatible ? "Installed" : "Incompatible (needs update)";
                     matchedJars.Add(jar);
                 }
             }
@@ -81,9 +85,12 @@ public class ModManagerService : IModManagerService
 
             if (mod != null)
             {
+                bool isCompatible = ModCompatibilityChecker.IsCompatible(mcVersion, null, null, Path.GetFileName(jar));
+
                 mod.InstalledFileName = Path.GetFileName(jar);
                 mod.InstalledVersion = "present";
-                mod.Status = "Installed";
+                mod.IsCompatible = isCompatible;
+                mod.Status = isCompatible ? "Installed" : "Incompatible (needs update)";
                 matchedJars.Add(jar);
             }
         }
@@ -120,7 +127,7 @@ public class ModManagerService : IModManagerService
                     }
                     else
                     {
-                        mod.Status = "Missing";
+                        mod.Status = mod.InstalledFileName != null ? "Update available" : "Missing";
                     }
                 }
                 else
@@ -158,14 +165,14 @@ public class ModManagerService : IModManagerService
         }
 
         // Always ensure metadata is populated for target mcVersion
-        bool hasMissingMetadata = mods.Any(m => m.DownloadUrl == null && (m.Status == "Missing" || m.Status == "Pending" || !m.IsInstalled));
+        bool hasMissingMetadata = mods.Any(m => m.DownloadUrl == null && (m.Status == "Missing" || m.Status == "Pending" || m.Status.StartsWith("Incompatible") || !m.IsInstalled));
         if (hasMissingMetadata)
         {
             statusProgress?.Report("Resolving compatible mod versions on Modrinth...");
             await PrepareModrinthMetadataAsync(mcVersion, mods, statusProgress);
         }
 
-        var toInstall = mods.Where(m => m.DownloadUrl != null && (!m.IsInstalled || m.Status == "Update available" || m.Status == "Missing")).ToList();
+        var toInstall = mods.Where(m => m.DownloadUrl != null && (!m.IsInstalled || m.Status == "Update available" || m.Status == "Missing" || m.Status.StartsWith("Incompatible"))).ToList();
         int alreadyUpToDate = mods.Count(m => m.IsInstalled && m.Status == "Up to date");
 
         int installedCount = 0;
@@ -240,6 +247,7 @@ public class ModManagerService : IModManagerService
 
                 mod.InstalledFileName = mod.TargetVersionNumber;
                 mod.InstalledVersion = "Latest";
+                mod.IsCompatible = true;
                 mod.Status = "Installed";
                 installedCount++;
             }

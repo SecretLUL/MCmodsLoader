@@ -11,6 +11,8 @@ internal enum ButtonKind
     Secondary,
     /// <summary>Drop-down field: sunken surface, left-aligned text, chevron on the right.</summary>
     Field,
+    /// <summary>Subtle ghost button: transparent surface, muted text, subtle hover.</summary>
+    Ghost,
 }
 
 /// <summary>
@@ -84,6 +86,10 @@ internal sealed class UiButton
         {
             switch (msg)
             {
+                case Native.WM_SETCURSOR when button.Kind == ButtonKind.Ghost:
+                    Native.SetCursor(Native.LoadCursorW(0, Native.IDC_HAND));
+                    return 1;
+
                 case Native.WM_MOUSEMOVE when !button.IsHot:
                     button.IsHot = true;
                     var tme = new Native.TRACKMOUSEEVENT
@@ -126,6 +132,12 @@ internal sealed class UiButton
         if (Kind == ButtonKind.Field)
         {
             DrawField(theme, item, disabled, focused);
+            return;
+        }
+
+        if (Kind == ButtonKind.Ghost)
+        {
+            DrawGhost(theme, item, disabled, pressed, focused);
             return;
         }
 
@@ -214,6 +226,34 @@ internal sealed class UiButton
         Native.SelectObject(item.Hdc, oldPen);
         Native.DeleteObject(brush);
         Native.DeleteObject(pen);
+    }
+
+    private void DrawGhost(Theme theme, in Native.DRAWITEMSTRUCT item, bool disabled, bool pressed, bool focused)
+    {
+        nint surfaceBrush = Native.CreateSolidBrush(Surface);
+        Gdi.Fill(item.Hdc, item.RcItem, surfaceBrush);
+        Native.DeleteObject(surfaceBrush);
+
+        int radius = theme.Scale(4);
+
+        if (!disabled && (IsHot || pressed))
+        {
+            uint hoverFill = pressed ? Theme.CardBorder : Theme.Secondary;
+            Gdi.RoundRect(item.Hdc, item.RcItem, radius, hoverFill);
+        }
+
+        if (focused && !disabled)
+        {
+            Gdi.RoundRect(item.Hdc, item.RcItem.Inflate(-theme.Scale(1), -theme.Scale(1)),
+                radius, 0, Theme.CardBorder);
+        }
+
+        uint textColor = disabled
+            ? Theme.DisabledText
+            : IsHot || pressed ? Theme.TextPrimary : Theme.TextMuted;
+
+        Gdi.Text(item.Hdc, Text, item.RcItem, theme.FontSmall, textColor,
+            Native.DT_CENTER | Native.DT_VCENTER | Native.DT_SINGLELINE);
     }
 
     public static UiButton? Find(nint hwnd) => ByHandle.TryGetValue(hwnd, out var b) ? b : null;

@@ -7,7 +7,8 @@ public record ModDefinition
     public required string FabricModId { get; init; }
     public string? InstalledVersion { get; set; }
     public string? InstalledFileName { get; set; }
-    public bool IsInstalled => !string.IsNullOrEmpty(InstalledFileName);
+    public bool IsCompatible { get; set; } = true;
+    public bool IsInstalled => !string.IsNullOrEmpty(InstalledFileName) && IsCompatible;
     public string? TargetVersionNumber { get; set; }
     public string? DownloadUrl { get; set; }
     public string Status { get; set; } = "Pending";

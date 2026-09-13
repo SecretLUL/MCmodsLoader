@@ -123,28 +123,24 @@ internal sealed partial class MainWindow
         int textLeft = _rcAction.Left + pad;
         int textW = _rcAction.Width - 2 * pad - S(InjectW) - S(16);
 
-        int statusW = Gdi.MeasureWidth(dc, _statusText, _theme.FontTitle);
-        statusW = Math.Min(statusW, textW);
-        var statusRect = Native.RECT.Xywh(textLeft, _rcAction.Top + S(18), statusW, S(22));
+        int statusH = S(30);
+        int statusTop = _rcAction.Top + (S(ActionH) - statusH) / 2;
+        int statusW = Math.Min(Gdi.MeasureWidth(dc, _statusText, _theme.FontTitle) + S(4), textW);
+        var statusRect = Native.RECT.Xywh(textLeft, statusTop, statusW, statusH);
         Gdi.Text(dc, _statusText, statusRect, _theme.FontTitle, Theme.TextPrimary,
             Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE | Native.DT_END_ELLIPSIS);
 
         // Mod-count pill, right after the status line.
         int badgeW = Gdi.MeasureWidth(dc, _modCountText, _theme.FontSmallBold) + S(16);
         int badgeH = S(20);
-        var badge = Native.RECT.Xywh(statusRect.Right + S(10),
-            statusRect.Top + (statusRect.Height - badgeH) / 2, badgeW, badgeH);
+        int badgeTop = _rcAction.Top + (S(ActionH) - badgeH) / 2;
+        var badge = Native.RECT.Xywh(statusRect.Right + S(10), badgeTop, badgeW, badgeH);
         if (badge.Right <= textLeft + textW)
         {
             Gdi.RoundRect(dc, badge, S(10), Theme.Badge, Theme.CardBorder);
             Gdi.Text(dc, _modCountText, badge, _theme.FontSmallBold, _modCountColor,
                 Native.DT_CENTER | Native.DT_VCENTER | Native.DT_SINGLELINE);
         }
-
-        Gdi.Text(dc, _subStatusText,
-            Native.RECT.Xywh(textLeft, _rcAction.Top + S(44), textW, S(34)),
-            _theme.FontSmall, Theme.TextMuted,
-            Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE | Native.DT_END_ELLIPSIS);
     }
 
     private nint OnDrawItem(nint lParam)

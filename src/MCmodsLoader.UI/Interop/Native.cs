@@ -61,7 +61,8 @@ internal static class Native
     public const uint MB_OK = 0x0, MB_ICONERROR = 0x10, MB_ICONWARNING = 0x30, MB_ICONINFORMATION = 0x40;
     public const uint BIF_RETURNONLYFSDIRS = 0x0001, BIF_EDITBOX = 0x0010, BIF_NEWDIALOGSTYLE = 0x0040;
     public const uint SRCCOPY = 0x00CC0020;
-    public const int IDC_ARROW = 32512;
+    public const uint WM_SETCURSOR = 0x0020;
+    public const int IDC_ARROW = 32512, IDC_HAND = 32649;
 
     // ---- Structs ---------------------------------------------------------
     [StructLayout(LayoutKind.Sequential)]
@@ -195,6 +196,7 @@ internal static class Native
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern nint LoadCursorW(nint instance, nint cursorName);
+    [DllImport("user32.dll")] public static extern nint SetCursor(nint hCursor);
 
     [DllImport("user32.dll", CharSet = CharSet.Unicode)]
     public static extern int MessageBoxW(nint hwnd, string text, string caption, uint type);
@@ -214,6 +216,7 @@ internal static class Native
     [DllImport("gdi32.dll")] public static extern uint SetTextColor(nint hdc, uint color);
     [DllImport("gdi32.dll")] public static extern bool RoundRect(nint hdc, int l, int t, int r, int b, int w, int h);
     [DllImport("gdi32.dll")] public static extern bool Polygon(nint hdc, POINT[] points, int count);
+    [DllImport("gdi32.dll")] public static extern bool Polyline(nint hdc, POINT[] points, int count);
     [DllImport("gdi32.dll", CharSet = CharSet.Unicode)] public static extern nint CreateFontIndirectW(ref LOGFONT lf);
     [DllImport("gdi32.dll")] public static extern nint CreateCompatibleDC(nint hdc);
     [DllImport("gdi32.dll")] public static extern nint CreateCompatibleBitmap(nint hdc, int w, int h);

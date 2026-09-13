@@ -1,7 +1,9 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+using MCmodsLoader.Core.Constants;
 using MCmodsLoader.Core.Models;
 using MCmodsLoader.Core.Services;
+using MCmodsLoader.Core.Utils;
 using MCmodsLoader.UI.Interop;
 
 namespace MCmodsLoader.UI;
@@ -19,6 +21,7 @@ internal sealed partial class MainWindow
     private readonly IModManagerService _modManagerService;
     private readonly IUpdateService _updateService;
 
+    private AppSettings _settings = new();
     private string _minecraftPath = "Detecting .minecraft...";
     private List<ModDefinition> _currentMods = new();
     private readonly List<string> _versions = new();
@@ -60,6 +63,7 @@ internal sealed partial class MainWindow
 
         switch (id)
         {
+            case IdAdvanced: OnToggleAdvanced(); break;
             case IdVersions: _picker.Toggle(_hwnd); break;
             case IdInject: _ = OnInjectAsync(); break;
             case IdFabric: _ = OnInstallFabricAsync(); break;
@@ -71,6 +75,31 @@ internal sealed partial class MainWindow
         }
     }
 
+    private void OnToggleAdvanced()
+    {
+        _advancedMenu.IncludeXaeroMinimap = _settings.IncludeXaeroMinimap;
+        _advancedMenu.IncludeXaeroWorldMap = _settings.IncludeXaeroWorldMap;
+        Native.GetWindowRect(_btnAdvanced.Hwnd, out var rect);
+        _advancedMenu.Toggle(_hwnd, rect);
+    }
+
+    private void OnModToggled(string slug, bool isEnabled)
+    {
+        if (slug == "xaeros-minimap")
+        {
+            _settings.IncludeXaeroMinimap = isEnabled;
+        }
+        else if (slug == "xaeros-world-map")
+        {
+            _settings.IncludeXaeroWorldMap = isEnabled;
+        }
+
+        if (SelectedVersion is { } ver)
+        {
+            UpdateModCounts(ver);
+        }
+    }
+
     private string? SelectedVersion => _picker.SelectedItem;
 
     private void OnVersionSelected(string version) => _ = RunGuardedAsync(() => RefreshAllAsync(version));
@@ -79,6 +108,14 @@ internal sealed partial class MainWindow
 
     private async Task OnLoadedAsync()
     {
+        _settings = new AppSettings
+        {
+            IncludeXaeroMinimap = true,
+            IncludeXaeroWorldMap = true,
+        };
+        _advancedMenu.IncludeXaeroMinimap = true;
+        _advancedMenu.IncludeXaeroWorldMap = true;
+
         _appVersionText = $"v{_updateService.CurrentVersion}";
         _minecraftPath = _minecraftService.GetDefaultMinecraftDirectory();
         Repaint();
@@ -129,11 +166,12 @@ internal sealed partial class MainWindow
         }
     }
 
-    private async Task RefreshAllAsync(string mcVersion, bool updateStatusText = true)
+    private void UpdateModCounts(string mcVersion, bool updateStatusText = true)
     {
         string modsDir = _minecraftService.GetModsDirectory(_minecraftPath);
+        var template = ModPresets.GetFilteredModPack(_settings.IncludeXaeroMinimap, _settings.IncludeXaeroWorldMap);
 
-        _currentMods = _modManagerService.ScanModsDirectory(modsDir);
+        _currentMods = _modManagerService.ScanModsDirectory(modsDir, template, mcVersion);
         int installedCount = _currentMods.Count(m => m.IsInstalled);
 
         _modCountText = $"{installedCount} / {_currentMods.Count} Installed";
@@ -152,6 +190,13 @@ internal sealed partial class MainWindow
                 _subStatusText = $"Click 'Inject Performance Mods' to install Fabric (if missing) and {_currentMods.Count - installedCount} missing FPS mod(s).";
             }
         }
+
+        Repaint();
+    }
+
+    private async Task RefreshAllAsync(string mcVersion, bool updateStatusText = true)
+    {
+        UpdateModCounts(mcVersion, updateStatusText);
 
         _fabricStatusText = "Checking...";
         _fabricStatusColor = Theme.TextMuted;
@@ -188,6 +233,8 @@ internal sealed partial class MainWindow
     {
         if (_isBusy) return;
 
+        _advancedMenu.Close();
+
         if (SelectedVersion is not { } selectedVersion)
         {
             Warn("Please select a Minecraft version first.", "No Version Selected");
@@ -222,6 +269,7 @@ internal sealed partial class MainWindow
             }
 
             string modsDir = _minecraftService.GetModsDirectory(_minecraftPath);
+            CleanUpDisabledMods(modsDir);
             SetStatus("Resolving & downloading mods...");
 
             var result = await _modManagerService.InstallOrUpdateModsAsync(
@@ -484,11 +532,53 @@ internal sealed partial class MainWindow
         _btnBrowse.SetEnabled(!isBusy);
         _btnRefresh.SetEnabled(!isBusy);
         _btnCheckUpdates.SetEnabled(!isBusy);
+        _btnAdvanced.SetEnabled(!isBusy);
         _picker.Field.SetEnabled(!isBusy);
-        if (isBusy) _picker.Close();
+        if (isBusy)
+        {
+            _picker.Close();
+        }
 
         if (!string.IsNullOrEmpty(status)) _statusText = status;
         Repaint();
+    }
+
+    private void CleanUpDisabledMods(string modsDir)
+    {
+        if (!Directory.Exists(modsDir)) return;
+
+        var disabledPrefixes = new List<string>();
+        if (!_settings.IncludeXaeroMinimap)
+        {
+            disabledPrefixes.Add("xaerominimap");
+            disabledPrefixes.Add("xaeros-minimap");
+        }
+        if (!_settings.IncludeXaeroWorldMap)
+        {
+            disabledPrefixes.Add("xaeroworldmap");
+            disabledPrefixes.Add("xaeros-world-map");
+        }
+
+        if (disabledPrefixes.Count == 0) return;
+
+        foreach (var jar in Directory.GetFiles(modsDir, "*.jar"))
+        {
+            string fn = Path.GetFileName(jar).ToLowerInvariant();
+            bool matches = disabledPrefixes.Any(p => fn.StartsWith(p + "-") || fn.StartsWith(p + "_") || fn.Equals(p + ".jar", StringComparison.OrdinalIgnoreCase));
+            if (!matches)
+            {
+                var meta = JarInspector.ReadFabricModJson(jar);
+                if (meta != null && disabledPrefixes.Any(p => p.Equals(meta.Id, StringComparison.OrdinalIgnoreCase)))
+                {
+                    matches = true;
+                }
+            }
+
+            if (matches)
+            {
+                try { File.Delete(jar); } catch { }
+            }
+        }
     }
 
     private void SetStatus(string text) { _statusText = text; Repaint(); }

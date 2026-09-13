@@ -105,4 +105,12 @@ public static class ModPresets
             }
         };
     }
+
+    public static IReadOnlyList<ModDefinition> GetFilteredModPack(bool includeXaeroMinimap, bool includeXaeroWorldMap)
+    {
+        return GetDefaultFpsModPack()
+            .Where(m => (includeXaeroMinimap || m.Slug != "xaeros-minimap") &&
+                        (includeXaeroWorldMap || m.Slug != "xaeros-world-map"))
+            .ToList();
+    }
 }

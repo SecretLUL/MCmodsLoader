@@ -18,11 +18,11 @@ internal sealed partial class MainWindow
 
     // Design metrics, in 96-DPI units.
     private const int DesignWidth = 840;
-    private const int Margin = 20, Gap = 16, HeaderH = 34, BannerH = 54, CardsH = 74, ActionH = 104;
+    private const int Margin = 20, Gap = 16, HeaderH = 34, BannerH = 54, CardsH = 74, ActionH = 72, FooterH = 22;
     private const int CardPad = 12, BrowseButtonW = 70, FabricButtonW = 100, InjectW = 240, ActionPad = 16;
 
     private const int IdOpenMods = 1001, IdRefresh = 1002, IdCheckUpdates = 1003, IdUpdateNow = 1004,
-                      IdBrowse = 1005, IdVersions = 1006, IdFabric = 1007, IdInject = 1008;
+                      IdBrowse = 1005, IdVersions = 1006, IdFabric = 1007, IdInject = 1008, IdAdvanced = 1009;
 
     // Rooted for the lifetime of the process: Windows keeps the raw pointer.
     private static readonly WndProcDelegate WindowProcedure = StaticWndProc;
@@ -33,7 +33,9 @@ internal sealed partial class MainWindow
     private nint _hwnd, _hInstance, _prgProgress;
     private Theme _theme = null!;
     private VersionPicker _picker = null!;
+    private AdvancedMenu _advancedMenu = null!;
 
+    private readonly UiButton _btnAdvanced = new(IdAdvanced, "Advanced ▾", ButtonKind.Ghost);
     private readonly UiButton _btnOpenMods = new(IdOpenMods, "Open Mods Folder", ButtonKind.Secondary);
     private readonly UiButton _btnRefresh = new(IdRefresh, "Refresh", ButtonKind.Secondary);
     private readonly UiButton _btnCheckUpdates = new(IdCheckUpdates, "Check Updates", ButtonKind.Secondary);
@@ -44,7 +46,7 @@ internal sealed partial class MainWindow
 
     private UiButton[] AllButtons => new[]
     {
-        _btnOpenMods, _btnRefresh, _btnCheckUpdates, _btnUpdateNow, _btnBrowse, _btnFabric, _btnInject,
+        _btnAdvanced, _btnOpenMods, _btnRefresh, _btnCheckUpdates, _btnUpdateNow, _btnBrowse, _btnFabric, _btnInject,
         _picker.Field,
     };
 
@@ -138,8 +140,11 @@ internal sealed partial class MainWindow
         _picker = new VersionPicker(IdVersions, _theme) { SelectionChanged = OnVersionSelected };
         _picker.Field.Surface = Theme.Card;
 
+        _advancedMenu = new AdvancedMenu(_theme) { ModToggled = OnModToggled };
+
         foreach (var button in AllButtons) button.Create(_hwnd, _hInstance);
 
+        _btnAdvanced.Surface = Theme.Background;
         _btnOpenMods.Surface = Theme.Background;
         _btnRefresh.Surface = Theme.Background;
         _btnCheckUpdates.Surface = Theme.Background;
@@ -165,7 +170,7 @@ internal sealed partial class MainWindow
             // While the version list is open it owns the keyboard: IsDialogMessage would
             // otherwise swallow Enter as "press the default button" and Escape as cancel,
             // so neither would ever reach the picker.
-            bool pickerWantsKeys = _picker.IsOpen && msg.Message == Native.WM_KEYDOWN;
+            bool pickerWantsKeys = (_picker.IsOpen || _advancedMenu.IsOpen) && msg.Message == Native.WM_KEYDOWN;
 
             // Otherwise IsDialogMessage gives Tab/Shift-Tab navigation and
             // Enter-on-focused-button for free.
@@ -234,6 +239,7 @@ internal sealed partial class MainWindow
         _theme = new Theme((uint)newDpi);
         ApplyWindowIcons();
         _picker.UpdateTheme(_theme);
+        _advancedMenu.UpdateTheme(_theme);
 
         var suggested = Marshal.PtrToStructure<Native.RECT>(suggestedRect);
         var (winW, winH) = WindowSize();
@@ -256,7 +262,7 @@ internal sealed partial class MainWindow
 
     private int ClientHeight96 => Margin + HeaderH + Gap
                                 + (_bannerVisible ? BannerH + Gap : 0)
-                                + CardsH + Gap + ActionH + Margin;
+                                + CardsH + Gap + ActionH + 8 + FooterH + 8;
 
     private (int Width, int Height) WindowSize()
     {
@@ -369,12 +375,16 @@ internal sealed partial class MainWindow
         _btnFabric.Move(Native.RECT.Xywh(_rcCardFabric.Right - pad - fabricBtnW, rowTop, fabricBtnW, S(26)));
 
         int injectW = S(InjectW), injectH = S(46), actionPad = S(ActionPad);
+        int injectTop = _rcAction.Top + (S(ActionH) - injectH) / 2;
         _btnInject.Move(Native.RECT.Xywh(_rcAction.Right - actionPad - injectW,
-            _rcAction.Top + actionPad, injectW, injectH));
+            injectTop, injectW, injectH));
 
-        _rcProgress = Native.RECT.Xywh(_rcAction.Left + actionPad, _rcAction.Bottom - actionPad - S(10),
-            _rcAction.Width - 2 * actionPad, S(10));
+        int prgH = S(5);
+        _rcProgress = Native.RECT.Xywh(_rcAction.Left + actionPad, _rcAction.Bottom - S(8),
+            _rcAction.Width - 2 * actionPad, prgH);
         Native.MoveWindow(_prgProgress, _rcProgress.Left, _rcProgress.Top, _rcProgress.Width, _rcProgress.Height, true);
         Native.ShowWindow(_prgProgress, _progressVisible ? Native.SW_SHOW : Native.SW_HIDE);
+
+        _btnAdvanced.Move(Native.RECT.Xywh(left, _rcAction.Bottom + S(8), S(96), S(FooterH)));
     }
 }

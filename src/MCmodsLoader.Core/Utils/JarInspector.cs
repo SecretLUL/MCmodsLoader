@@ -3,7 +3,7 @@ using System.Text.Json;
 
 namespace MCmodsLoader.Core.Utils;
 
-public record FabricModMetadata(string Id, string Name, string Version);
+public record FabricModMetadata(string Id, string Name, string Version, string? MinecraftDependency = null);
 
 public static class JarInspector
 {
@@ -37,7 +37,28 @@ public static class JarInspector
             if (string.IsNullOrWhiteSpace(id))
                 return null;
 
-            return new FabricModMetadata(id, name, version);
+            string? mcDep = null;
+            if (root.TryGetProperty("depends", out var dependsProp) && dependsProp.ValueKind == JsonValueKind.Object)
+            {
+                if (dependsProp.TryGetProperty("minecraft", out var mcProp))
+                {
+                    if (mcProp.ValueKind == JsonValueKind.String)
+                    {
+                        mcDep = mcProp.GetString();
+                    }
+                    else if (mcProp.ValueKind == JsonValueKind.Array)
+                    {
+                        var list = new List<string>();
+                        foreach (var item in mcProp.EnumerateArray())
+                        {
+                            if (item.GetString() is { } s) list.Add(s);
+                        }
+                        mcDep = string.Join(" || ", list);
+                    }
+                }
+            }
+
+            return new FabricModMetadata(id, name, version, mcDep);
         }
         catch
         {

@@ -40,6 +40,70 @@ public class ModPresetsTests
         Assert.Contains("lambdynamiclights", slugs);
         Assert.Contains("fabric-api", slugs);
     }
+
+    [Theory]
+    [InlineData(true, true, 15, false, false)]
+    [InlineData(false, true, 14, true, false)]
+    [InlineData(true, false, 14, false, true)]
+    [InlineData(false, false, 13, true, true)]
+    public void GetFilteredModPack_FiltersXaeroModsCorrectly(
+        bool includeMinimap, bool includeWorldMap, int expectedCount, bool excludesMinimap, bool excludesWorldMap)
+    {
+        var mods = ModPresets.GetFilteredModPack(includeMinimap, includeWorldMap);
+        Assert.Equal(expectedCount, mods.Count);
+        Assert.Equal(excludesMinimap, !mods.Any(m => m.Slug == "xaeros-minimap"));
+        Assert.Equal(excludesWorldMap, !mods.Any(m => m.Slug == "xaeros-world-map"));
+    }
+}
+
+public class AppSettingsTests : IDisposable
+{
+    private readonly string _tempFile;
+
+    public AppSettingsTests()
+    {
+        _tempFile = Path.Combine(Path.GetTempPath(), $"SettingsTest_{Guid.NewGuid():N}.json");
+    }
+
+    public void Dispose()
+    {
+        if (File.Exists(_tempFile))
+        {
+            try { File.Delete(_tempFile); } catch { }
+        }
+    }
+
+    [Fact]
+    public void Load_WhenFileMissing_ReturnsDefaultValues()
+    {
+        var settings = AppSettings.Load(_tempFile);
+        Assert.True(settings.IncludeXaeroMinimap);
+        Assert.True(settings.IncludeXaeroWorldMap);
+    }
+
+    [Fact]
+    public void SaveAndLoad_PersistsValuesCorrectly()
+    {
+        var settings = new AppSettings
+        {
+            IncludeXaeroMinimap = false,
+            IncludeXaeroWorldMap = true
+        };
+        settings.Save(_tempFile);
+
+        Assert.True(File.Exists(_tempFile));
+
+        var loaded = AppSettings.Load(_tempFile);
+        Assert.False(loaded.IncludeXaeroMinimap);
+        Assert.True(loaded.IncludeXaeroWorldMap);
+
+        loaded.IncludeXaeroWorldMap = false;
+        loaded.Save(_tempFile);
+
+        var loadedAgain = AppSettings.Load(_tempFile);
+        Assert.False(loadedAgain.IncludeXaeroMinimap);
+        Assert.False(loadedAgain.IncludeXaeroWorldMap);
+    }
 }
 
 public class UpdateServiceTests
@@ -757,6 +821,52 @@ public class ModManagerServiceTests : IDisposable
     }
 
     [Fact]
+    public void ScanModsDirectory_WithIncompatibleMinecraftVersion_MarksModAsIncompatible()
+    {
+        CreateModJar(_tempDir, "sodium-fabric-0.8.0+mc1.21.11.jar", "sodium", "0.8.0+mc1.21.11");
+
+        var mockModrinth = new MockModrinthService();
+        var manager = new ModManagerService(mockModrinth);
+
+        var mods26 = manager.ScanModsDirectory(_tempDir, mcVersion: "26.2");
+        var sodium26 = mods26.Single(m => m.Slug == "sodium");
+        Assert.False(sodium26.IsCompatible);
+        Assert.False(sodium26.IsInstalled);
+        Assert.Equal("Incompatible (needs update)", sodium26.Status);
+        Assert.Equal("sodium-fabric-0.8.0+mc1.21.11.jar", sodium26.InstalledFileName);
+
+        var mods121 = manager.ScanModsDirectory(_tempDir, mcVersion: "1.21.11");
+        var sodium121 = mods121.Single(m => m.Slug == "sodium");
+        Assert.True(sodium121.IsCompatible);
+        Assert.True(sodium121.IsInstalled);
+        Assert.Equal("Installed", sodium121.Status);
+    }
+
+    [Fact]
+    public void ScanModsDirectory_WithRealisticMixedVersionFolder_CorrectlyFiltersCompatibleInstalledMods()
+    {
+        CreateModJar(_tempDir, "entityculling-fabric-1.9.4-mc1.21.11.jar", "entityculling", "1.9.4");
+        CreateModJar(_tempDir, "fabric-api-0.139.5+1.21.11.jar", "fabric-api", "0.139.5+1.21.11");
+        CreateModJar(_tempDir, "fabric-language-kotlin-1.13.7+kotlin.2.2.21.jar", "fabric-language-kotlin", "1.13.7+kotlin.2.2.21");
+        CreateModJar(_tempDir, "ImmediatelyFast-Fabric-1.14.0+1.21.11.jar", "immediatelyfast", "1.14.0+1.21.11");
+        CreateModJar(_tempDir, "lambdynamiclights-4.9.1+1.21.11.jar", "lambdynlights", "4.9.1+1.21.11");
+        CreateModJar(_tempDir, "sodium-fabric-0.8.0+mc1.21.11.jar", "sodium", "0.8.0+mc1.21.11");
+        CreateModJar(_tempDir, "Zoomify-2.14.6+1.21.11.jar", "zoomify", "2.14.6+1.21.11");
+
+        var mockModrinth = new MockModrinthService();
+        var manager = new ModManagerService(mockModrinth);
+
+        var mods26 = manager.ScanModsDirectory(_tempDir, mcVersion: "26.2");
+        int compatible26 = mods26.Count(m => m.IsInstalled);
+        Assert.Equal(1, compatible26);
+        Assert.True(mods26.Single(m => m.Slug == "fabric-language-kotlin").IsInstalled);
+
+        var mods121 = manager.ScanModsDirectory(_tempDir, mcVersion: "1.21.11");
+        int compatible121 = mods121.Count(m => m.IsInstalled);
+        Assert.Equal(7, compatible121);
+    }
+
+    [Fact]
     public async Task InstallOrUpdateModsAsync_WhenDownloadFails_DoesNotDeleteExistingFile()
     {
         string existingJar = Path.Combine(_tempDir, "sodium-0.5.0.jar");
@@ -984,5 +1094,33 @@ public class FabricServiceTests : IDisposable
         var status = await service.CheckFabricStatusAsync(_tempDir, "1.21.4");
         Assert.NotNull(status);
         Assert.False(status.IsInstalled);
+    }
+}
+
+public class ModCompatibilityCheckerTests
+{
+    [Theory]
+    [InlineData("26.2", "1.21.x", null, null, false)]
+    [InlineData("1.21.4", "1.21.x", null, null, true)]
+    [InlineData("26.2", ">=1.21.11- <1.21.12-", null, null, false)]
+    [InlineData("1.21.11", ">=1.21.11- <1.21.12-", null, null, true)]
+    [InlineData("26.2", "1.21.11", null, null, false)]
+    [InlineData("1.21.11", "1.21.11", null, null, true)]
+    [InlineData("26.2", "~1.21.11", null, null, false)]
+    [InlineData("1.21.11", "~1.21.11", null, null, true)]
+    [InlineData("26.2", null, "0.8.0+mc1.21.11", "sodium-fabric-0.8.0+mc1.21.11.jar", false)]
+    [InlineData("1.21.11", null, "0.8.0+mc1.21.11", "sodium-fabric-0.8.0+mc1.21.11.jar", true)]
+    [InlineData("26.2", null, "0.9.2-beta.1+mc26.2", "sodium-fabric-0.9.2-beta.1+mc26.2.jar", true)]
+    [InlineData("26.2", null, "1.13.7+kotlin.2.2.21", "fabric-language-kotlin-1.13.7+kotlin.2.2.21.jar", true)]
+    [InlineData("26.2", "~26.2-", null, null, true)]
+    [InlineData("26.2", "~26.2-beta.4", null, null, true)]
+    [InlineData("26.2", "~26.2", null, null, true)]
+    [InlineData("1.21.11", "~26.2-", null, null, false)]
+    [InlineData("1.21.11", "~26.2-beta.4", null, null, false)]
+    public void IsCompatible_EvaluatesVersionCorrectly(
+        string targetVersion, string? depends, string? modVersion, string? fileName, bool expected)
+    {
+        bool result = ModCompatibilityChecker.IsCompatible(targetVersion, depends, modVersion, fileName);
+        Assert.Equal(expected, result);
     }
 }
