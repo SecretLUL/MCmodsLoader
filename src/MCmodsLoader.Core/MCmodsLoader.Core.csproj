@@ -6,4 +6,8 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\default_mods.json" />
+  </ItemGroup>
+
 </Project>

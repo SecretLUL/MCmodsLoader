@@ -38,7 +38,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 
 ## 📦 Curated Modpack
 
-MCmodsLoader comes pre-configured with 15 performance and quality-of-life mods:
+MCmodsLoader comes pre-configured with 20 performance and quality-of-life mods:
 
 | Mod | Category | Purpose |
 | :--- | :--- | :--- |
@@ -47,6 +47,10 @@ MCmodsLoader comes pre-configured with 15 performance and quality-of-life mods:
 | **FerriteCore** | Performance | Memory usage optimizations that drastically cut down RAM consumption. |
 | **Entity Culling** | Performance | Skips rendering of hidden entities and tile entities for higher framerates. |
 | **ImmediatelyFast** | Performance | Accelerates immediate mode rendering, optimizing HUD, fonts, and particle rendering. |
+| **More Culling** | Performance | Aggressively skips rendering invisible block faces, item frame backs, and sign texts. |
+| **Cull Leaves** | Performance | Culls interior faces of leaf blocks for substantial FPS boosts in forest biomes. |
+| **BadOptimizations** | Performance | Micro-optimizations for lightmap caching, sky color sampling, and client tick loops. |
+| **Fast IP Ping** | Quality of Life | Pings multiplayer servers concurrently in the background for instant server list loading. |
 | **LambDynamicLights** | Quality of Life | Dynamic hand-held and entity lighting effects with high performance. |
 | **Zoomify** | Quality of Life | Smooth, highly configurable camera zoom with mouse wheel support. |
 | **AppleSkin** | Quality of Life | Displays food saturation, exhaustion levels, and potential health restoration in the HUD. |
@@ -55,6 +59,7 @@ MCmodsLoader comes pre-configured with 15 performance and quality-of-life mods:
 | **Mod Menu** | Quality of Life | In-game mod list and settings interface accessible right from the pause menu. |
 | **Fabric API** | Library | Essential core hooks required by virtually all modern Fabric mods. |
 | **Fabric Language Kotlin** | Library | Kotlin language adapter and runtime required by modern Kotlin-based mods. |
+| **Cloth Config API** | Library | Configuration screen API required by More Culling and companion mods. |
 | **YetAnotherConfigLib (YACL)** | Library | Configuration and GUI framework required by Zoomify and companion mods. |
 | **Text Placeholder API** | Library | Text formatting and placeholder parsing utility for UI and HUD mods. |
 

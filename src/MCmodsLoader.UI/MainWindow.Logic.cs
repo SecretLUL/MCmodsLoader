@@ -384,6 +384,7 @@ internal sealed partial class MainWindow
         SetBusy(true, "Refreshing mods and status...");
         try
         {
+            await ModPresets.TryUpdateFromRemoteAsync();
             await RefreshAllAsync(selectedVersion);
         }
         finally
@@ -434,6 +435,18 @@ internal sealed partial class MainWindow
 
     private async Task CheckForUpdatesAsync(bool manualCheck = false)
     {
+        try
+        {
+            bool presetUpdated = await ModPresets.TryUpdateFromRemoteAsync();
+            if (presetUpdated && SelectedVersion is { } ver)
+            {
+                UpdateModCounts(ver, updateStatusText: false);
+            }
+        }
+        catch
+        {
+        }
+
         try
         {
             var update = await _updateService.CheckForUpdateAsync("SecretLUL/MCmodsLoader");

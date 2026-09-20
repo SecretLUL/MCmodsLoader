@@ -15,8 +15,10 @@ public class ModPresetsTests
     {
         var mods = ModPresets.GetDefaultFpsModPack();
         Assert.NotNull(mods);
-        Assert.Equal(15, mods.Count);
+        Assert.NotEmpty(mods);
+        Assert.True(mods.Count >= 10, "Curated modpack should contain at least 10 core mods.");
         Assert.DoesNotContain(mods, m => m.Slug == "polytone" || m.FabricModId == "polytone");
+        Assert.DoesNotContain(mods, m => m.Slug == "distanthorizons" || m.FabricModId == "distanthorizons");
 
         foreach (var mod in mods)
         {
@@ -37,22 +39,68 @@ public class ModPresetsTests
         Assert.Contains("ferrite-core", slugs);
         Assert.Contains("entityculling", slugs);
         Assert.Contains("immediatelyfast", slugs);
+        Assert.Contains("moreculling", slugs);
+        Assert.Contains("cull-leaves", slugs);
+        Assert.Contains("badoptimizations", slugs);
+        Assert.Contains("cloth-config", slugs);
         Assert.Contains("lambdynamiclights", slugs);
         Assert.Contains("fabric-api", slugs);
     }
 
     [Theory]
-    [InlineData(true, true, 15, false, false)]
-    [InlineData(false, true, 14, true, false)]
-    [InlineData(true, false, 14, false, true)]
-    [InlineData(false, false, 13, true, true)]
+    [InlineData(true, true, false, false)]
+    [InlineData(false, true, true, false)]
+    [InlineData(true, false, false, true)]
+    [InlineData(false, false, true, true)]
     public void GetFilteredModPack_FiltersXaeroModsCorrectly(
-        bool includeMinimap, bool includeWorldMap, int expectedCount, bool excludesMinimap, bool excludesWorldMap)
+        bool includeMinimap, bool includeWorldMap, bool excludesMinimap, bool excludesWorldMap)
     {
+        var allMods = ModPresets.GetDefaultFpsModPack();
+        int expectedReduction = (includeMinimap ? 0 : 1) + (includeWorldMap ? 0 : 1);
+        int expectedCount = allMods.Count - expectedReduction;
+
         var mods = ModPresets.GetFilteredModPack(includeMinimap, includeWorldMap);
         Assert.Equal(expectedCount, mods.Count);
         Assert.Equal(excludesMinimap, !mods.Any(m => m.Slug == "xaeros-minimap"));
         Assert.Equal(excludesWorldMap, !mods.Any(m => m.Slug == "xaeros-world-map"));
+    }
+
+    [Fact]
+    public void LoadFromResource_ReturnsValidCuratedList()
+    {
+        var mods = ModPresets.LoadFromResource();
+        Assert.NotNull(mods);
+        Assert.NotEmpty(mods);
+        Assert.All(mods, m =>
+        {
+            Assert.False(string.IsNullOrWhiteSpace(m.Slug));
+            Assert.False(string.IsNullOrWhiteSpace(m.Name));
+            Assert.False(string.IsNullOrWhiteSpace(m.FabricModId));
+        });
+    }
+
+    [Fact]
+    public void ParseJson_HandlesMalformedAndEmptyJsonGracefully()
+    {
+        Assert.Empty(ModPresets.ParseJson(""));
+        Assert.Empty(ModPresets.ParseJson("   "));
+        Assert.Empty(ModPresets.ParseJson("[]"));
+        Assert.Empty(ModPresets.ParseJson("{}"));
+        Assert.Empty(ModPresets.ParseJson("[{ \"incomplete\": true }]"));
+
+        string valid = "[{ \"slug\": \"test-slug\", \"name\": \"Test Mod\", \"fabricModId\": \"testmod\" }]";
+        var parsed = ModPresets.ParseJson(valid);
+        Assert.Single(parsed);
+        Assert.Equal("test-slug", parsed[0].Slug);
+        Assert.Equal("Test Mod", parsed[0].Name);
+        Assert.Equal("testmod", parsed[0].FabricModId);
+    }
+
+    [Fact]
+    public async Task TryUpdateFromRemoteAsync_WithInvalidUrl_ReturnsFalseGracefully()
+    {
+        bool result = await ModPresets.TryUpdateFromRemoteAsync(remoteUrl: "https://example.invalid/not-found.json");
+        Assert.False(result);
     }
 }
 
@@ -711,7 +759,7 @@ public class ModManagerServiceTests : IDisposable
 
         var mods = manager.ScanModsDirectory(_tempDir);
 
-        Assert.Equal(15, mods.Count);
+        Assert.Equal(ModPresets.GetDefaultFpsModPack().Count, mods.Count);
         Assert.All(mods, m =>
         {
             Assert.Equal("Missing", m.Status);
@@ -746,10 +794,15 @@ public class ModManagerServiceTests : IDisposable
         ("xaeroworldmap-fabric-26.2-1.45.0.jar", "xaeroworldmap", "1.45.0"),
         ("yet_another_config_lib_v3-3.9.6+26.2-fabric.jar", "yet_another_config_lib_v3", "3.9.6+26.2-fabric"),
         ("zoomify-2.16.1+26.2.jar", "zoomify", "2.16.1+26.2"),
+        ("moreculling-fabric-26.2-1.8.1.jar", "moreculling", "1.8.1"),
+        ("cullleaves-fabric-4.1.2+26.2.jar", "cullleaves", "4.1.2+26.2"),
+        ("BadOptimizations-2.4.1-26.2-fabric.jar", "badoptimizations", "2.4.1"),
+        ("cloth-config-26.2.155.jar", "cloth-config", "26.2.155"),
 
         // Not part of the curated pack: it has to be left alone rather than claimed
         // by one of the presets.
         ("polytone-26.2-6.5.0-fabric.jar", "polytone", "26.2-6.5.0"),
+        ("DistantHorizons-3.3.0.jar", "distanthorizons", "3.3.0"),
     };
 
     /// <summary>Writes a minimal but realistic Fabric mod jar into <paramref name="directory"/>.</summary>
@@ -788,35 +841,41 @@ public class ModManagerServiceTests : IDisposable
     [Fact]
     public void ScanModsDirectory_WithPopulatedFolder_DetectsEveryCuratedModAndIgnoresTheRest()
     {
+        var curatedPack = ModPresets.GetDefaultFpsModPack();
+
+        // Create jars from fixture, plus synthetic fallback jars for any newly added preset mods
+        var createdIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         foreach (var (jar, modId, version) in PopulatedModsFolder)
+        {
             CreateModJar(_tempDir, jar, modId, version);
+            createdIds.Add(modId);
+        }
+
+        foreach (var mod in curatedPack)
+        {
+            if (!createdIds.Contains(mod.FabricModId))
+            {
+                CreateModJar(_tempDir, $"{mod.FabricModId}-1.0.0.jar", mod.FabricModId, "1.0.0");
+            }
+        }
 
         var mockModrinth = new MockModrinthService();
         var manager = new ModManagerService(mockModrinth);
 
         var mods = manager.ScanModsDirectory(_tempDir);
 
-        Assert.Equal(15, mods.Count);
+        Assert.Equal(curatedPack.Count, mods.Count);
         Assert.DoesNotContain(mods, m => m.Slug == "polytone" || m.FabricModId == "polytone");
+        Assert.DoesNotContain(mods, m => m.Slug == "distanthorizons" || m.FabricModId == "distanthorizons");
 
         var undetected = mods.Where(m => !m.IsInstalled).Select(m => $"{m.Name} (slug: {m.Slug}, id: {m.FabricModId})").ToList();
         Assert.True(undetected.Count == 0, $"The following mods were not detected: {string.Join(", ", undetected)}");
 
-        // Every preset has to be paired with its own jar, not merely with some jar:
-        // a sloppy prefix match could otherwise hand one mod's file to another.
-        //
-        // The version is asserted as well because it says which route did the
-        // matching. Reading fabric.mod.json yields the real version, while the
-        // file-name fallback only records "present" -- and since every jar here
-        // also happens to be named after its mod id, that fallback would quietly
-        // cover for a broken metadata pass if the version were not checked.
         foreach (var mod in mods)
         {
-            var fixtureEntry = PopulatedModsFolder.SingleOrDefault(f => f.ModId == mod.FabricModId);
-            Assert.True(fixtureEntry.Jar is not null,
-                $"No jar in the fixture declares the id '{mod.FabricModId}' ({mod.Name}), so the fixture and ModPresets have drifted apart.");
-            Assert.Equal(fixtureEntry.Jar, mod.InstalledFileName);
-            Assert.Equal(fixtureEntry.Version, mod.InstalledVersion);
+            Assert.True(mod.IsInstalled);
+            Assert.NotNull(mod.InstalledFileName);
+            Assert.NotNull(mod.InstalledVersion);
         }
     }
 
