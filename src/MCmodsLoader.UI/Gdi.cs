@@ -90,11 +90,22 @@ internal static class Gdi
     public static int MeasureWidth(nint hdc, string text, nint font)
     {
         if (string.IsNullOrEmpty(text)) return 0;
-        const uint DT_CALCRECT = 0x0400;
         nint oldFont = Native.SelectObject(hdc, font);
         var r = new Native.RECT();
-        Native.DrawTextW(hdc, text, text.Length, ref r, DT_CALCRECT | Native.DT_SINGLELINE | Native.DT_NOPREFIX);
+        Native.DrawTextW(hdc, text, text.Length, ref r, Native.DT_CALCRECT | Native.DT_SINGLELINE | Native.DT_NOPREFIX);
         Native.SelectObject(hdc, oldFont);
         return r.Width;
+    }
+
+    /// <summary>Measures the height a string needs when it wraps at <paramref name="width"/>.</summary>
+    public static int MeasureWrappedHeight(nint hdc, string text, nint font, int width)
+    {
+        if (string.IsNullOrEmpty(text)) return 0;
+        nint oldFont = Native.SelectObject(hdc, font);
+        var r = new Native.RECT { Right = width };
+        Native.DrawTextW(hdc, text, text.Length, ref r,
+            Native.DT_CALCRECT | Native.DT_WORDBREAK | Native.DT_EDITCONTROL | Native.DT_NOPREFIX);
+        Native.SelectObject(hdc, oldFont);
+        return r.Height;
     }
 }

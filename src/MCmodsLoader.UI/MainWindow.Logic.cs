@@ -415,15 +415,17 @@ internal sealed partial class MainWindow
         {
             _statusChangedSinceScan = false;
             string note = notYet.Count > 0 ? $" Not available for {mcVersion} yet: {string.Join(", ", notYet)}." : string.Empty;
-            if (installedCount == expected.Count)
+            // The scan only sees which jars are there; updates are checked by Inject.
+            int missing = expected.Count - installedCount;
+            if (missing == 0)
             {
                 _statusText = "All performance mods ready!";
-                _subStatusText = $"{installedCount} of {expected.Count} curated FPS mods are installed and up to date.{note}";
+                _subStatusText = $"All {expected.Count} mods of the pack are installed; 'Inject Performance Mods' checks them for updates.{note}";
             }
             else
             {
                 _statusText = "Ready to inject mods.";
-                _subStatusText = $"Click 'Inject Performance Mods' to install Fabric (if missing) and {expected.Count - installedCount} missing FPS mod(s).{note}";
+                _subStatusText = $"Click 'Inject Performance Mods' to install the {missing} missing {(missing == 1 ? "mod" : "mods")}.{note}";
             }
         }
 
