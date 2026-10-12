@@ -76,7 +76,16 @@ public class MinecraftVersionComparer : IComparer<string>
             }
         }
 
-        return tokensX.Count.CompareTo(tokensY.Count);
+        // Missing parts count as zero, as in SemVer and in Fabric's own check: mods declare
+        // "26.2.0" for the game that calls itself 26.2. "1.21" still sorts below "1.21.1".
+        var longer = tokensX.Count > tokensY.Count ? tokensX : tokensY;
+        for (int i = minLen; i < longer.Count; i++)
+        {
+            if (!long.TryParse(longer[i], out long part) || part != 0)
+                return tokensX.Count.CompareTo(tokensY.Count);
+        }
+
+        return 0;
     }
 
     private static List<string> Tokenize(string version)

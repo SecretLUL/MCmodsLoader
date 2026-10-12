@@ -369,6 +369,11 @@ public class MinecraftVersionComparerTests
     [InlineData("1.9.4", "1.21.4", -1)]
     [InlineData("1.21.1", "1.21", 1)]
     [InlineData("26.3-pre-2", "26.3-pre-1", 1)]
+    // Missing parts are zeros, as Fabric sees it: Distant Horizons declares "26.2.0" for 26.2.
+    [InlineData("26.2", "26.2.0", 0)]
+    [InlineData("1.21.0", "1.21", 0)]
+    [InlineData("26.2", "26.2.1", -1)]
+    [InlineData("26.2", "26.2.0-beta.1", 1)]
     public void Compare_OrdersMinecraftVersionsCorrectly(string v1, string v2, int expectedSign)
     {
         int result = MinecraftVersionComparer.Instance.Compare(v1, v2);
@@ -1227,6 +1232,9 @@ public class ModCompatibilityCheckerTests
     [InlineData("26.2", "~26.2", null, null, true)]
     [InlineData("1.21.11", "~26.2-", null, null, false)]
     [InlineData("1.21.11", "~26.2-beta.4", null, null, false)]
+    // Distant Horizons 3.3.0 for 26.2 declares "minecraft": ["26.2.0"].
+    [InlineData("26.2", "26.2.0", null, null, true)]
+    [InlineData("26.3", "26.2.0", null, null, false)]
     public void IsCompatible_EvaluatesVersionCorrectly(
         string targetVersion, string? depends, string? modVersion, string? fileName, bool expected)
     {
