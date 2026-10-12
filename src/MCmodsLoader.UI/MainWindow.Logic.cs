@@ -227,9 +227,16 @@ internal sealed partial class MainWindow
 
             if (_versions.Count > 0)
             {
-                // Prefer a version the user already has installed, else the newest release.
-                var installed = _minecraftService.GetInstalledVersions(_minecraftPath);
-                string? preferred = installed.FirstOrDefault(v => _versions.Contains(v)) ?? _versions[0];
+                // Prefer the installed version that already has Fabric, then any installed
+                // version, then the newest release. Reading the versions folder and the
+                // launcher profiles is disk work, so it stays off the UI thread.
+                string path = _minecraftPath;
+                var available = _versions.ToList();
+                string preferred = await Task.Run(() => MinecraftService.PickPreferredVersionAsync(
+                        available,
+                        _minecraftService.GetInstalledVersions(path),
+                        async v => (await _fabricService.CheckFabricStatusAsync(path, v)).IsInstalled))
+                    ?? _versions[0];
 
                 int index = Math.Max(0, _versions.IndexOf(preferred));
                 versionToSelect = _versions[index];

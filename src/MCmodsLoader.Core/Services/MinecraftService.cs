@@ -117,6 +117,34 @@ public partial class MinecraftService : IMinecraftService
         return LauncherProcessNames.Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
     }
 
+    /// <summary>
+    /// Picks the version to preselect: the newest installed version that already has
+    /// Fabric, because that is the setup the shared mods folder belongs to; then the
+    /// newest installed version; then the newest available release. Preselecting a newer
+    /// vanilla version instead would let a quick Inject switch every mod over to it.
+    /// <paramref name="installed"/> must be ordered newest first, as GetInstalledVersions
+    /// returns it. Returns null when nothing is available.
+    /// </summary>
+    public static async Task<string?> PickPreferredVersionAsync(
+        IReadOnlyList<string> available, IReadOnlyList<string> installed, Func<string, Task<bool>> hasFabricAsync)
+    {
+        if (available.Count == 0)
+            return null;
+
+        var candidates = installed
+            .Select(v => available.FirstOrDefault(a => a.Equals(v, StringComparison.OrdinalIgnoreCase)))
+            .OfType<string>()
+            .ToList();
+
+        foreach (string version in candidates)
+        {
+            if (await hasFabricAsync(version).ConfigureAwait(false))
+                return version;
+        }
+
+        return candidates.FirstOrDefault() ?? available[0];
+    }
+
     public string GetDefaultMinecraftDirectory()
     {
         string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);

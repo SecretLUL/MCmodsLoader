@@ -708,6 +708,66 @@ public class MinecraftServiceTests
             }
         }
     }
+
+    [Theory]
+    // A newer vanilla version next to the Fabric setup must not win.
+    [InlineData(new[] { "26.3", "26.2" }, new[] { "26.2" }, "26.2")]
+    // Fabric on several versions: the newest of them.
+    [InlineData(new[] { "26.3", "26.2", "1.21.11" }, new[] { "26.2", "1.21.11" }, "26.2")]
+    // No Fabric anywhere: the newest installed version.
+    [InlineData(new[] { "26.2", "1.21.11" }, new string[0], "26.2")]
+    // Nothing installed: the newest release.
+    [InlineData(new string[0], new string[0], "26.3")]
+    // Installed versions that are not offered are ignored.
+    [InlineData(new[] { "1.8.9" }, new[] { "1.8.9" }, "26.3")]
+    public async Task PickPreferredVersionAsync_PrefersTheNewestInstalledFabricVersion(
+        string[] installed, string[] withFabric, string expected)
+    {
+        string[] available = { "26.3", "26.2", "26.1", "1.21.11" };
+
+        string? picked = await MinecraftService.PickPreferredVersionAsync(
+            available, installed, v => Task.FromResult(withFabric.Contains(v)));
+
+        Assert.Equal(expected, picked);
+    }
+
+    [Fact]
+    public async Task PickPreferredVersionAsync_WithNothingAvailable_ReturnsNull()
+    {
+        Assert.Null(await MinecraftService.PickPreferredVersionAsync(
+            Array.Empty<string>(), new[] { "26.2" }, _ => Task.FromResult(true)));
+    }
+
+    [Fact]
+    public async Task PickPreferredVersionAsync_WithRealLayout_PicksTheFabricVersionOverANewerVanillaOne()
+    {
+        string tempDir = Path.Combine(Path.GetTempPath(), $"McPickTest_{Guid.NewGuid():N}");
+        try
+        {
+            foreach (string folder in new[] { "26.3", "26.2", "fabric-loader-0.19.5-26.2" })
+            {
+                string dir = Path.Combine(tempDir, "versions", folder);
+                Directory.CreateDirectory(dir);
+                File.WriteAllText(Path.Combine(dir, $"{folder}.json"), "{}");
+            }
+
+            var minecraft = new MinecraftService();
+            var fabric = new FabricService();
+            string? picked = await MinecraftService.PickPreferredVersionAsync(
+                new[] { "26.3", "26.2", "26.1" },
+                minecraft.GetInstalledVersions(tempDir),
+                async v => (await fabric.CheckFabricStatusAsync(tempDir, v)).IsInstalled);
+
+            Assert.Equal("26.2", picked);
+        }
+        finally
+        {
+            if (Directory.Exists(tempDir))
+            {
+                try { Directory.Delete(tempDir, true); } catch { }
+            }
+        }
+    }
 }
 
 public class ModManagerServiceTests : IDisposable
