@@ -16,6 +16,10 @@ jobs:
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          # Full history and tags, so builds without an explicit version (a manual
+          # run on a branch) still resolve it from the newest tag.
+          fetch-depth: 0
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
@@ -31,23 +35,36 @@ jobs:
       - name: Publish NativeAOT Executable
         shell: pwsh
         run: |
+          # v1.3.0-beta.1 -> Version 1.3.0-beta.1, AssemblyVersion/FileVersion 1.3.0
+          # (both must be purely numeric). A ref that is not a version tag passes
+          # nothing and leaves the version to Directory.Build.props.
           $rawRef = "${{ github.ref_name }}"
-          $version = if ($rawRef -match '^v?(\d+\.\d+\.\d+.*)$') { $matches[1] } else { "1.0.0" }
+          $versionArgs = @()
+          if ($rawRef -match '^v?((\d+\.\d+\.\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?)$') {
+            $version = $matches[1]
+            $numeric = $matches[2]
+            $versionArgs = @(
+              "-p:Version=$version",
+              "-p:AssemblyVersion=$numeric",
+              "-p:FileVersion=$numeric",
+              "-p:InformationalVersion=$version"
+            )
+            Write-Host "Publishing MCmodsLoader version: $version as a native binary..."
+          } else {
+            Write-Host "'$rawRef' is not a version tag; the version comes from the newest Git tag."
+          }
 
           # The AOT link step shells out to vswhere.exe to find the MSVC linker, and
           # vswhere is not on PATH by default.
           $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
           if (Test-Path $installer) { $env:PATH = "$installer;$env:PATH" }
 
-          Write-Host "Publishing MCmodsLoader version: $version as a native binary..."
           dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
             -c Release `
             -r win-x64 `
-            -p:Version=$version `
-            -p:AssemblyVersion=$version `
-            -p:FileVersion=$version `
-            -p:InformationalVersion=$version `
+            @versionArgs `
             -o publish
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $exe = Get-Item publish/MCmodsLoader.exe
           Write-Host "Produced $($exe.Name): $([math]::Round($exe.Length / 1MB, 2)) MB"
@@ -59,7 +76,9 @@ jobs:
           files: publish/MCmodsLoader.exe
           name: Release ${{ github.ref_name }}
           draft: false
-          prerelease: false
+          # Tags such as v1.3.0-beta.1 ship as pre-releases, which /releases/latest
+          # (and therefore the self-updater) skips.
+          prerelease: ${{ contains(github.ref_name, '-') }}
           generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
