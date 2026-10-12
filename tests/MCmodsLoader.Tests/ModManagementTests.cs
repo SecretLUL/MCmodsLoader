@@ -1199,11 +1199,149 @@ public class ModManagementTests : IDisposable
         Assert.Empty(Directory.GetFiles(_modsDir));
     }
 
+    // ---- Release channel and version pins ----------------------------------
+
+    private const string SodiumId = "AANobbMI";
+    private const string IrisId = "YL57xq9U";
+
+    private static string VersionEntry(string id, string type, string fileName) => $@"{{
+        ""id"": ""{id}"", ""project_id"": ""{SodiumId}"", ""version_number"": ""{id}"", ""version_type"": ""{type}"",
+        ""game_versions"": [""26.3""], ""loaders"": [""fabric""],
+        ""files"": [{{ ""url"": ""https://cdn.modrinth.com/data/{SodiumId}/{fileName}"", ""filename"": ""{fileName}"", ""primary"": true }}],
+        ""dependencies"": []
+    }}";
+
+    [Theory]
+    // A newer alpha or beta does not win over a release for the same Minecraft version...
+    [InlineData("alpha,release", "release")]
+    [InlineData("beta,alpha,release,release", "release")]
+    // ...but without any release the newest pre-release is taken.
+    [InlineData("beta,alpha", "beta")]
+    public async Task ModrinthService_PrefersReleasesOverNewerPreReleases(string typesNewestFirst, string expectedType)
+    {
+        string[] types = typesNewestFirst.Split(',');
+        string json = "[" + string.Join(",", types.Select((t, i) => VersionEntry($"v{i}-{t}", t, $"sodium-{i}.jar"))) + "]";
+        var service = new ModrinthService(new HttpClient(new RoutingHandler(_ => Json(json))));
+
+        var file = await service.GetLatestVersionFileAsync("sodium", "26.3");
+
+        Assert.NotNull(file);
+        Assert.Equal($"v{Array.IndexOf(types, expectedType)}-{expectedType}", file.VersionId);
+    }
+
+    [Theory]
+    [InlineData("26.3", "fabric", true)]
+    [InlineData("26.2", "fabric", false)]
+    [InlineData("26.3", "neoforge", false)]
+    public async Task ModrinthService_GetVersionFileAsync_OnlyReturnsAFabricBuildForTheVersion(string mcVersion, string loader, bool expectFile)
+    {
+        string json = $@"{{ ""id"": ""bAZQdGpg"", ""project_id"": ""{SodiumId}"", ""version_number"": ""mc26.3-0.9.2-fabric"",
+            ""version_type"": ""release"", ""game_versions"": [""26.3""], ""loaders"": [""{loader}""],
+            ""files"": [{{ ""url"": ""https://cdn.modrinth.com/data/{SodiumId}/sodium.jar"", ""filename"": ""sodium-fabric-0.9.2+mc26.3.jar"", ""primary"": true }}],
+            ""dependencies"": [] }}";
+        Uri? requested = null;
+        var service = new ModrinthService(new HttpClient(new RoutingHandler(request =>
+        {
+            requested = request.RequestUri;
+            return Json(json);
+        })));
+
+        var file = await service.GetVersionFileAsync("bAZQdGpg", mcVersion);
+
+        Assert.Equal("/v2/version/bAZQdGpg", requested!.AbsolutePath);
+        Assert.Equal(expectFile, file != null);
+        if (expectFile) Assert.Equal("bAZQdGpg", file!.VersionId);
+    }
+
+    private static List<ModDefinition> IrisPack(params (string, string, string)[] more) =>
+        Pack(new[] { Sodium, ("iris", "Iris Shaders", "iris") }.Concat(more).ToArray());
+
+    // As on Modrinth for 26.3: the newest Sodium is newer than the build Iris was made for.
+    private static FakeModrinthService IrisFake(string pinnedSodiumVersionId) => new FakeModrinthService()
+        .Add("sodium", "sodium-fabric-0.9.3+mc26.3.jar", JarBytes("sodium", "0.9.3+mc26.3"), SodiumId)
+        .Add("iris", "iris-fabric-1.11.7+mc26.3.jar", JarBytes("iris", "1.11.7+mc26.3"), IrisId,
+            new ModrinthDependency(SodiumId, pinnedSodiumVersionId, "required"));
+
+    [Fact]
+    public async Task InstallOrUpdate_InstallsTheSodiumBuildIrisPins_InsteadOfTheNewest()
+    {
+        var fake = IrisFake("bAZQdGpg")
+            .AddVersion("bAZQdGpg", "sodium-fabric-0.9.2+mc26.3.jar", JarBytes("sodium", "0.9.2+mc26.3"), SodiumId);
+        var manager = new ModManagerService(fake);
+        var mods = manager.ScanModsDirectory(_modsDir, IrisPack(), "26.3");
+
+        var result = await manager.InstallOrUpdateModsAsync(_modsDir, "26.3", mods);
+
+        Assert.Equal(new[] { "iris-fabric-1.11.7+mc26.3.jar", "sodium-fabric-0.9.2+mc26.3.jar" }, JarFiles());
+        Assert.Equal(2, result.InstalledOrUpdatedCount);
+        Assert.False(result.HasIssues);
+    }
+
+    [Fact]
+    public async Task InstallOrUpdate_ReplacesANewerInstalledSodium_WithTheBuildIrisPins()
+    {
+        WriteJar("sodium-fabric-0.9.3+mc26.3.jar", "sodium", "0.9.3+mc26.3");
+        var fake = IrisFake("bAZQdGpg")
+            .AddVersion("bAZQdGpg", "sodium-fabric-0.9.2+mc26.3.jar", JarBytes("sodium", "0.9.2+mc26.3"), SodiumId);
+        var manager = new ModManagerService(fake);
+        var mods = manager.ScanModsDirectory(_modsDir, IrisPack(), "26.3");
+
+        var result = await manager.InstallOrUpdateModsAsync(_modsDir, "26.3", mods);
+
+        Assert.Equal(new[] { "iris-fabric-1.11.7+mc26.3.jar", "sodium-fabric-0.9.2+mc26.3.jar" }, JarFiles());
+        Assert.False(result.HasIssues);
+    }
+
+    [Fact]
+    public async Task InstallOrUpdate_WhenThePinMatchesTheNewest_InstallsItWithoutAnotherLookup()
+    {
+        // Without AddVersion a lookup of the pin would come back empty and add a warning.
+        var manager = new ModManagerService(IrisFake("sodium-latest"));
+        var mods = manager.ScanModsDirectory(_modsDir, IrisPack(), "26.3");
+
+        var result = await manager.InstallOrUpdateModsAsync(_modsDir, "26.3", mods);
+
+        Assert.Equal(new[] { "iris-fabric-1.11.7+mc26.3.jar", "sodium-fabric-0.9.3+mc26.3.jar" }, JarFiles());
+        Assert.False(result.HasIssues);
+    }
+
+    [Fact]
+    public async Task InstallOrUpdate_WhenThePinnedBuildIsNotAvailable_KeepsTheNewestAndWarns()
+    {
+        var manager = new ModManagerService(IrisFake("NoSuchVer"));
+        var mods = manager.ScanModsDirectory(_modsDir, IrisPack(), "26.3");
+
+        var result = await manager.InstallOrUpdateModsAsync(_modsDir, "26.3", mods);
+
+        Assert.Contains("sodium-fabric-0.9.3+mc26.3.jar", JarFiles());
+        Assert.Equal(new[] { "The Sodium build that Iris Shaders requires is not available for Minecraft 26.3; the newest one is installed" },
+            result.Warnings);
+    }
+
+    [Fact]
+    public async Task InstallOrUpdate_WhenTwoModsPinDifferentBuilds_KeepsTheNewestAndWarns()
+    {
+        var fake = IrisFake("PinA0001")
+            .Add("sodium-addon", "sodiumaddon-1.0.0.jar", JarBytes("sodiumaddon", "1.0.0"), "AddOn0002",
+                new ModrinthDependency(SodiumId, "PinB0002", "required"))
+            .AddVersion("PinA0001", "sodium-fabric-0.9.2+mc26.3.jar", JarBytes("sodium", "0.9.2+mc26.3"), SodiumId)
+            .AddVersion("PinB0002", "sodium-fabric-0.9.1+mc26.3.jar", JarBytes("sodium", "0.9.1+mc26.3"), SodiumId);
+        var manager = new ModManagerService(fake);
+        var mods = manager.ScanModsDirectory(_modsDir, IrisPack(("sodium-addon", "Sodium Addon", "sodiumaddon")), "26.3");
+
+        var result = await manager.InstallOrUpdateModsAsync(_modsDir, "26.3", mods);
+
+        Assert.Contains("sodium-fabric-0.9.3+mc26.3.jar", JarFiles());
+        Assert.Equal(new[] { "Iris Shaders, Sodium Addon require different builds of Sodium; the newest one is installed" },
+            result.Warnings);
+    }
+
     // ---- Fakes -----------------------------------------------------------
 
     private sealed class FakeModrinthService : IModrinthService
     {
         private readonly Dictionary<string, ModrinthVersionFile> _latest = new(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, ModrinthVersionFile> _byVersionId = new(StringComparer.Ordinal);
         private readonly Dictionary<string, byte[]> _content = new(StringComparer.Ordinal);
         private int _versionQueries;
 
@@ -1223,11 +1361,35 @@ public class ModManagementTests : IDisposable
                 Sha1 = Hex(SHA1.HashData(content)),
                 Sha512 = Hex(SHA512.HashData(content)),
                 ProjectId = projectId,
+                VersionId = $"{slug}-latest",
                 VersionNumber = JarInspectorVersion(content),
                 Dependencies = dependencies,
             };
             _content[url] = content;
             return this;
+        }
+
+        /// <summary>A specific build, e.g. an older one another mod pins; only <see cref="GetVersionFileAsync"/> returns it.</summary>
+        public FakeModrinthService AddVersion(string versionId, string fileName, byte[] content, string? projectId = null)
+        {
+            string url = $"https://cdn.invalid/versions/{versionId}/{Uri.EscapeDataString(fileName)}";
+            _byVersionId[versionId] = new ModrinthVersionFile
+            {
+                Url = url,
+                Filename = fileName,
+                Sha1 = Hex(SHA1.HashData(content)),
+                Sha512 = Hex(SHA512.HashData(content)),
+                ProjectId = projectId,
+                VersionId = versionId,
+                VersionNumber = JarInspectorVersion(content),
+            };
+            _content[url] = content;
+            return this;
+        }
+
+        public Task<ModrinthVersionFile?> GetVersionFileAsync(string versionId, string mcVersion, CancellationToken ct = default)
+        {
+            return Task.FromResult(_byVersionId.TryGetValue(versionId, out var file) ? file : null);
         }
 
         private static string? JarInspectorVersion(byte[] content)

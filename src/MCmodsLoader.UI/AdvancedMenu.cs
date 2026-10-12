@@ -6,7 +6,6 @@ namespace MCmodsLoader.UI;
 internal sealed class AdvancedMenu
 {
     private const string PopupClassName = "MCmodsLoaderAdvancedMenu";
-    private const int RowCount = 2;
     private static readonly WndProcDelegate PopupProcedure = StaticPopupProc;
     private delegate nint WndProcDelegate(nint hwnd, uint msg, nint wParam, nint lParam);
     private static AdvancedMenu? _openMenu;
@@ -16,10 +15,31 @@ internal sealed class AdvancedMenu
     private nint _popup;
     private nint _ownerWindow;
     private int _hoverRow = -1;
+    private IReadOnlyList<Option> _options = Array.Empty<Option>();
 
-    public bool IncludeXaeroMinimap { get; set; } = true;
-    public bool IncludeXaeroWorldMap { get; set; } = true;
+    /// <summary>One row: a mod that can be switched on or off. <see cref="Key"/> is what <see cref="ModToggled"/> reports.</summary>
+    public sealed class Option
+    {
+        public Option(string key, string label, bool isChecked)
+        {
+            Key = key;
+            Label = label;
+            IsChecked = isChecked;
+        }
+
+        public string Key { get; }
+        public string Label { get; }
+        public bool IsChecked { get; set; }
+    }
+
     public Action<string, bool>? ModToggled { get; set; }
+
+    /// <summary>Replaces the rows; call it before <see cref="Open"/>, whose height follows the row count.</summary>
+    public void SetOptions(IReadOnlyList<Option> options)
+    {
+        _options = options;
+        _hoverRow = -1;
+    }
 
     public bool IsOpen => _popup != 0 && _openMenu == this;
 
@@ -50,7 +70,7 @@ internal sealed class AdvancedMenu
         int width = _theme.Scale(185);
         int headerH = _theme.Scale(24);
         int rowH = _theme.Scale(28);
-        int height = headerH + 2 * rowH + _theme.Scale(6);
+        int height = headerH + _options.Count * rowH + _theme.Scale(6);
 
         nint monitor = Native.MonitorFromWindow(ownerWindow, Native.MONITOR_DEFAULTTONEAREST);
         var info = new Native.MONITORINFO { CbSize = (uint)Marshal.SizeOf<Native.MONITORINFO>() };
@@ -108,12 +128,15 @@ internal sealed class AdvancedMenu
                 Close();
                 return true;
 
-            case Native.VK_DOWN:
-                SetHoverRow(_hoverRow < 0 ? 0 : Math.Min(_hoverRow + 1, RowCount - 1));
+            case Native.VK_DOWN when _options.Count > 0:
+                SetHoverRow(_hoverRow < 0 ? 0 : Math.Min(_hoverRow + 1, _options.Count - 1));
                 return true;
 
-            case Native.VK_UP:
-                SetHoverRow(_hoverRow < 0 ? RowCount - 1 : Math.Max(_hoverRow - 1, 0));
+            case Native.VK_UP when _options.Count > 0:
+                SetHoverRow(_hoverRow < 0 ? _options.Count - 1 : Math.Max(_hoverRow - 1, 0));
+                return true;
+
+            case Native.VK_DOWN or Native.VK_UP:
                 return true;
 
             case Native.VK_SPACE or Native.VK_RETURN:
@@ -135,16 +158,11 @@ internal sealed class AdvancedMenu
 
     private void ToggleRow(int row)
     {
-        if (row == 0)
-        {
-            IncludeXaeroMinimap = !IncludeXaeroMinimap;
-            ModToggled?.Invoke("xaeros-minimap", IncludeXaeroMinimap);
-        }
-        else if (row == 1)
-        {
-            IncludeXaeroWorldMap = !IncludeXaeroWorldMap;
-            ModToggled?.Invoke("xaeros-world-map", IncludeXaeroWorldMap);
-        }
+        if (row < 0 || row >= _options.Count) return;
+
+        var option = _options[row];
+        option.IsChecked = !option.IsChecked;
+        ModToggled?.Invoke(option.Key, option.IsChecked);
 
         Native.InvalidateRect(_popup, 0, false);
     }
@@ -258,7 +276,7 @@ internal sealed class AdvancedMenu
 
         if (y < headerH) return -1;
         int row = (y - headerH) / rowH;
-        return row < RowCount ? row : -1;
+        return row < _options.Count ? row : -1;
     }
 
     private void PaintPopup(nint hwnd) => Gdi.PaintBuffered(hwnd, (memDc, client) =>
@@ -276,8 +294,10 @@ internal sealed class AdvancedMenu
         Gdi.Text(memDc, "OPTIONAL MODS", headerRect, _theme.FontLabel, Theme.TextMuted,
             Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE);
 
-        DrawRow(memDc, client, 0, headerH, rowH, pad, "Xaero's Minimap", IncludeXaeroMinimap);
-        DrawRow(memDc, client, 1, headerH + rowH, rowH, pad, "Xaero's World Map", IncludeXaeroWorldMap);
+        for (int row = 0; row < _options.Count; row++)
+        {
+            DrawRow(memDc, client, row, headerH + row * rowH, rowH, pad, _options[row].Label, _options[row].IsChecked);
+        }
     });
 
     private void DrawRow(nint dc, Native.RECT client, int rowIndex, int top, int rowH, int pad, string label, bool isChecked)

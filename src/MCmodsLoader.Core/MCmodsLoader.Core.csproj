@@ -8,7 +8,12 @@
   </PropertyGroup>
 
   <ItemGroup>
-    <EmbeddedResource Include="Resources\default_mods.json" />
+    <!--
+      default_mods.json stays in the repository unchanged and is no longer built in: v1.2.x
+      clients still download it from main as their mod list, and every entry in it is a
+      mandatory mod to them. The current list, with optional mods, is default_mods.v2.json.
+    -->
+    <EmbeddedResource Include="Resources\default_mods.v2.json" />
   </ItemGroup>
 
   <ItemGroup>

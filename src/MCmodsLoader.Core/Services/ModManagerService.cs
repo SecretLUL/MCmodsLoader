@@ -228,6 +228,8 @@ public class ModManagerService : IModManagerService
             }
         }
 
+        await ApplyVersionPinsAsync(plans, modsDirectory, mcVersion, warnings, ct).ConfigureAwait(false);
+
         var dependencyInfo = await AnalyzeDependenciesAsync(plans, jarIndex, warnings, ct).ConfigureAwait(false);
 
         // A skipped mod's incompatible jar would stop Fabric from starting just like an unavailable one's
@@ -350,6 +352,7 @@ public class ModManagerService : IModManagerService
                     mod.TargetSha1 = file.Sha1;
                     mod.TargetSha512 = file.Sha512;
                     plan.ProjectId = file.ProjectId;
+                    plan.VersionId = file.VersionId;
                     plan.VersionNumber = file.VersionNumber;
                     plan.Dependencies = file.Dependencies;
                 }
@@ -441,6 +444,81 @@ public class ModManagerService : IModManagerService
             .Where(d => !plan.DisabledFiles.Contains(d + DisabledSuffix, StringComparer.OrdinalIgnoreCase))
             .ToArray();
         return true;
+    }
+
+    /// <summary>
+    /// Some mods are built against one exact build of another mod in the pack: Iris names the Sodium version it
+    /// supports. When a mod that will be present pins a version of another resolved mod, that version is installed
+    /// instead of the newest one, even if that means going back a version. A pin that can't be satisfied, or pins
+    /// that disagree, keep the newest version and add a warning.
+    /// </summary>
+    private async Task ApplyVersionPinsAsync(List<ModPlan> plans, string modsDirectory, string mcVersion, List<string> warnings, CancellationToken ct)
+    {
+        var resolvedByProject = new Dictionary<string, ModPlan>(StringComparer.Ordinal);
+        foreach (var plan in plans.Where(p => p.ProjectId != null && p.Outcome is PlanOutcome.Install or PlanOutcome.UpToDate))
+            resolvedByProject.TryAdd(plan.ProjectId!, plan);
+
+        var pinsByTarget = plans
+            .Where(p => p.Outcome is PlanOutcome.Install or PlanOutcome.UpToDate)
+            .SelectMany(p => p.Dependencies
+                .Where(d => IsRequired(d) && d.VersionId != null &&
+                            resolvedByProject.TryGetValue(d.ProjectId!, out var target) && target != p)
+                .Select(d => (Pinner: p, Target: resolvedByProject[d.ProjectId!], VersionId: d.VersionId!)))
+            .GroupBy(pin => pin.Target);
+
+        foreach (var pins in pinsByTarget)
+        {
+            var target = pins.Key;
+            var mod = target.Mod;
+            string pinners = string.Join(", ", pins.Select(pin => pin.Pinner.Mod.Name).Distinct());
+            var versionIds = pins.Select(pin => pin.VersionId).Distinct(StringComparer.Ordinal).ToList();
+
+            if (versionIds.Count > 1)
+            {
+                warnings.Add($"{pinners} require different builds of {mod.Name}; the newest one is installed");
+                continue;
+            }
+
+            if (string.Equals(versionIds[0], target.VersionId, StringComparison.Ordinal))
+                continue;
+
+            ModrinthVersionFile? file;
+            try
+            {
+                file = await _modrinthService.GetVersionFileAsync(versionIds[0], mcVersion, ct).ConfigureAwait(false);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException || !ct.IsCancellationRequested)
+            {
+                warnings.Add($"Could not look up the {mod.Name} build that {pinners} requires: {ex.Message}");
+                continue;
+            }
+
+            if (file == null)
+            {
+                warnings.Add($"The {mod.Name} build that {pinners} requires is not available for Minecraft {mcVersion}; the newest one is installed");
+                continue;
+            }
+
+            mod.DownloadUrl = file.Url;
+            mod.TargetVersionNumber = file.Filename;
+            mod.TargetSha1 = file.Sha1;
+            mod.TargetSha512 = file.Sha512;
+            target.VersionId = file.VersionId;
+            target.VersionNumber = file.VersionNumber;
+            target.Dependencies = file.Dependencies;
+
+            if (mod.IsInstalled && await IsUpToDateAsync(mod, modsDirectory, ct).ConfigureAwait(false))
+            {
+                target.Outcome = PlanOutcome.UpToDate;
+                mod.Status = "Up to date";
+            }
+            else
+            {
+                target.Outcome = PlanOutcome.Install;
+                if (mod.IsInstalled)
+                    mod.Status = "Update available";
+            }
+        }
     }
 
     /// <summary>What the dependency check learned before the downloads; reused for the final check.</summary>
@@ -961,6 +1039,7 @@ public class ModManagerService : IModManagerService
         public PlanOutcome Outcome { get; set; } = PlanOutcome.Pending;
         public string? Reason { get; set; }
         public string? ProjectId { get; set; }
+        public string? VersionId { get; set; }
         public string? VersionNumber { get; set; }
         public IReadOnlyList<ModrinthDependency> Dependencies { get; set; } = Array.Empty<ModrinthDependency>();
         public List<string> DisabledFiles { get; } = new();

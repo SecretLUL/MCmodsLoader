@@ -102,23 +102,37 @@ internal sealed partial class MainWindow
         int textLeft = _rcAction.Left + pad;
         int textW = _rcAction.Width - 2 * pad - S(InjectW) - S(16);
 
-        int statusH = S(30);
-        int statusTop = _rcAction.Top + (S(ActionH) - statusH) / 2;
+        // The status line with the mod-count pill, and below it the details: what an action is
+        // doing right now, or what to do next. The details wrap onto at most two lines, and the
+        // whole block is centred on the button beside it.
+        int statusH = S(26);
+        int lineH = Gdi.MeasureWrappedHeight(dc, "Ag", _theme.FontSmall, textW);
+        int detailH = Math.Min(Gdi.MeasureWrappedHeight(dc, _subStatusText, _theme.FontSmall, textW), 2 * lineH);
+        int gap = detailH > 0 ? S(2) : 0;
+        int blockTop = _rcAction.Top + (S(ActionH) - (statusH + gap + detailH)) / 2;
+
         int statusW = Math.Min(Gdi.MeasureWidth(dc, _statusText, _theme.FontTitle) + S(4), textW);
-        var statusRect = Native.RECT.Xywh(textLeft, statusTop, statusW, statusH);
+        var statusRect = Native.RECT.Xywh(textLeft, blockTop, statusW, statusH);
         Gdi.Text(dc, _statusText, statusRect, _theme.FontTitle, Theme.TextPrimary,
             Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE | Native.DT_END_ELLIPSIS);
 
         // Mod-count pill, right after the status line.
         int badgeW = Gdi.MeasureWidth(dc, _modCountText, _theme.FontSmallBold) + S(16);
         int badgeH = S(20);
-        int badgeTop = _rcAction.Top + (S(ActionH) - badgeH) / 2;
-        var badge = Native.RECT.Xywh(statusRect.Right + S(10), badgeTop, badgeW, badgeH);
+        var badge = Native.RECT.Xywh(statusRect.Right + S(10), blockTop + (statusH - badgeH) / 2, badgeW, badgeH);
         if (badge.Right <= textLeft + textW)
         {
             Gdi.RoundRect(dc, badge, S(10), Theme.Badge, Theme.CardBorder);
             Gdi.Text(dc, _modCountText, badge, _theme.FontSmallBold, _modCountColor,
                 Native.DT_CENTER | Native.DT_VCENTER | Native.DT_SINGLELINE);
+        }
+
+        if (detailH > 0)
+        {
+            // Edit-control rules: no half-visible last line, and an ellipsis where the text is cut.
+            var detailRect = Native.RECT.Xywh(textLeft, statusRect.Bottom + gap, textW, detailH);
+            Gdi.Text(dc, _subStatusText, detailRect, _theme.FontSmall, Theme.TextMuted,
+                Native.DT_LEFT | Native.DT_WORDBREAK | Native.DT_EDITCONTROL | Native.DT_END_ELLIPSIS);
         }
     }
 

@@ -950,7 +950,7 @@ public class PresetAndSettingsPersistenceTests : IDisposable
 
     [Theory]
     [InlineData("sodium", "lithium", "fabric-api")]
-    [InlineData("sodium", "lithium", "fabric-api", "iris", "sodium", "modmenu")]
+    [InlineData("sodium", "lithium", "fabric-api", "polytone", "sodium", "modmenu")]
     public async Task TryUpdateFromRemoteAsync_RejectsBrokenListsWithoutCachingThem(params string[] slugs)
     {
         string? cacheBefore = ReadCache();
@@ -960,7 +960,8 @@ public class PresetAndSettingsPersistenceTests : IDisposable
 
         Assert.False(updated);
         Assert.Equal(cacheBefore, ReadCache());
-        Assert.DoesNotContain(ModPresets.GetDefaultFpsModPack(), m => m.Slug == "iris");
+        // polytone is not part of the pack, so finding it would mean the broken list was adopted.
+        Assert.DoesNotContain(ModPresets.GetDefaultFpsModPack(), m => m.Slug == "polytone");
     }
 
     [Fact]
@@ -969,12 +970,12 @@ public class PresetAndSettingsPersistenceTests : IDisposable
         // Based on the embedded list, and changing only a display name, so other tests
         // reading the shared pack concurrently see the same mods and count throughout.
         using var stream = typeof(ModPresets).Assembly.GetManifestResourceStream(
-            typeof(ModPresets).Assembly.GetManifestResourceNames().Single(n => n.EndsWith("default_mods.json")))!;
+            typeof(ModPresets).Assembly.GetManifestResourceNames().Single(n => n.EndsWith("default_mods.v2.json")))!;
         string original = new StreamReader(stream).ReadToEnd();
         var mods = ModPresets.ParseJson(original);
         string renamedName = mods[^1].Name + " (renamed)";
         string renamed = "[" + string.Join(",", mods.Select((m, i) =>
-            JsonSerializeEntry(m.Slug, i == mods.Count - 1 ? renamedName : m.Name, m.FabricModId))) + "]";
+            JsonSerializeEntry(m, i == mods.Count - 1 ? renamedName : m.Name))) + "]";
 
         try
         {
@@ -1006,15 +1007,22 @@ public class PresetAndSettingsPersistenceTests : IDisposable
         return await ModPresets.TryUpdateFromRemoteAsync(client, "https://dummy.url/mods.json");
     }
 
-    private static string JsonSerializeEntry(string slug, string name, string fabricModId)
+    // Keeps the optional-mod fields: tests reading the shared pack meanwhile must not see
+    // the optional mods turn mandatory.
+    private static string JsonSerializeEntry(ModDefinition mod, string name)
     {
         using var buffer = new MemoryStream();
         using (var writer = new Utf8JsonWriter(buffer))
         {
             writer.WriteStartObject();
-            writer.WriteString("slug", slug);
+            writer.WriteString("slug", mod.Slug);
             writer.WriteString("name", name);
-            writer.WriteString("fabricModId", fabricModId);
+            writer.WriteString("fabricModId", mod.FabricModId);
+            if (mod.IsOptional)
+            {
+                writer.WriteBoolean("optional", true);
+                writer.WriteBoolean("enabledByDefault", mod.EnabledByDefault);
+            }
             writer.WriteEndObject();
         }
         return Encoding.UTF8.GetString(buffer.ToArray());
@@ -1024,13 +1032,20 @@ public class PresetAndSettingsPersistenceTests : IDisposable
     public void AppSettingsSave_ReplacesContentAtomically()
     {
         string path = Path.Combine(_tempDir, "settings.json");
-        new AppSettings { IncludeXaeroMinimap = false }.Save(path);
-        new AppSettings { IncludeXaeroMinimap = true, IncludeXaeroWorldMap = false }.Save(path);
+        var first = new AppSettings();
+        first.SetOptionalModEnabled("xaeros-minimap", false);
+        first.Save(path);
+
+        var second = new AppSettings();
+        second.SetOptionalModEnabled("xaeros-minimap", true);
+        second.SetOptionalModEnabled("xaeros-world-map", false);
+        second.Save(path);
 
         using (var doc = JsonDocument.Parse(File.ReadAllText(path)))
         {
-            Assert.True(doc.RootElement.GetProperty("includeXaeroMinimap").GetBoolean());
-            Assert.False(doc.RootElement.GetProperty("includeXaeroWorldMap").GetBoolean());
+            var choices = doc.RootElement.GetProperty("optionalMods");
+            Assert.True(choices.GetProperty("xaeros-minimap").GetBoolean());
+            Assert.False(choices.GetProperty("xaeros-world-map").GetBoolean());
         }
         Assert.Equal(new[] { path }, Directory.GetFiles(_tempDir));
     }
@@ -1039,11 +1054,14 @@ public class PresetAndSettingsPersistenceTests : IDisposable
     public void AppSettingsSave_WhenTheFileCannotBeReplaced_KeepsTheOldContent()
     {
         string path = Path.Combine(_tempDir, "settings.json");
-        new AppSettings { IncludeXaeroMinimap = false }.Save(path);
+        var settings = new AppSettings();
+        settings.SetOptionalModEnabled("xaeros-minimap", false);
+        settings.Save(path);
         string before = File.ReadAllText(path);
         File.SetAttributes(path, FileAttributes.ReadOnly);
 
-        new AppSettings { IncludeXaeroMinimap = true }.Save(path);
+        settings.SetOptionalModEnabled("xaeros-minimap", true);
+        settings.Save(path);
 
         Assert.Equal(before, File.ReadAllText(path));
         Assert.Equal(new[] { path }, Directory.GetFiles(_tempDir));

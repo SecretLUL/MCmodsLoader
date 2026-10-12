@@ -18,7 +18,8 @@ internal sealed partial class MainWindow
 
     // Design metrics, in 96-DPI units.
     private const int DesignWidth = 840;
-    private const int Margin = 20, Gap = 16, HeaderH = 34, BannerH = 54, CardsH = 74, ActionH = 72, FooterH = 22;
+    // The action card holds the status line plus up to two lines of details below it.
+    private const int Margin = 20, Gap = 16, HeaderH = 34, BannerH = 54, CardsH = 74, ActionH = 84, FooterH = 22;
     private const int CardPad = 12, BrowseButtonW = 70, FabricButtonW = 100, InjectW = 240, ActionPad = 16;
 
     private const int IdOpenMods = 1001, IdRefresh = 1002, IdCheckUpdates = 1003, IdUpdateNow = 1004,

@@ -5,6 +5,13 @@ public record ModDefinition
     public required string Slug { get; init; }
     public required string Name { get; init; }
     public required string FabricModId { get; init; }
+
+    /// <summary>Optional mods are listed under "Advanced" and only installed while they are switched on.</summary>
+    public bool IsOptional { get; init; }
+
+    /// <summary>Whether an optional mod is on for a user who has never switched it; ignored for the rest of the pack.</summary>
+    public bool EnabledByDefault { get; init; } = true;
+
     public string? InstalledVersion { get; set; }
     public string? InstalledFileName { get; set; }
     public bool IsCompatible { get; set; } = true;
@@ -72,6 +79,7 @@ public record ModrinthVersionFile
     public string? Sha1 { get; init; }
     public string? Sha512 { get; init; }
     public string? ProjectId { get; init; }
+    public string? VersionId { get; init; }
     public string? VersionNumber { get; init; }
     public IReadOnlyList<ModrinthDependency> Dependencies { get; init; } = Array.Empty<ModrinthDependency>();
 }
