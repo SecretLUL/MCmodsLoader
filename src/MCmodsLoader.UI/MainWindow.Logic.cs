@@ -18,9 +18,10 @@ internal sealed partial class MainWindow
 {
     private const string GitHubRepo = "SecretLUL/MCmodsLoader";
 
-    // Modrinth slugs of the optional mods the Advanced menu switches.
-    private const string XaeroMinimapSlug = "xaeros-minimap";
-    private const string XaeroWorldMapSlug = "xaeros-world-map";
+    private const string NotAvailableStatus = "Not available for this version";
+
+    // Asking Modrinth whether the missing mods exist for a version must not hold anything up for long.
+    private static readonly TimeSpan AvailabilityCheckTimeout = TimeSpan.FromSeconds(20);
 
     // Longest list a result dialog shows per section before summarising the rest.
     private const int MaxListedPerSection = 10;
@@ -37,6 +38,16 @@ internal sealed partial class MainWindow
     private readonly IUpdateService _updateService;
 
     private AppSettings _settings = new();
+
+    // What the last scan made of each optional mod (slug -> on); the Advanced menu shows it.
+    private readonly Dictionary<string, bool> _optionalModStates = new(StringComparer.OrdinalIgnoreCase);
+
+    // Per Minecraft version, which mods Modrinth has a build of (slug -> available), learned from
+    // injections and from asking about the missing ones after a scan. A mod without a build is
+    // left out of the count, so a pack that lacks only such mods reads as complete. Session only:
+    // a build can be published any day.
+    private readonly Dictionary<string, Dictionary<string, bool>> _availability = new(StringComparer.OrdinalIgnoreCase);
+
     private string _minecraftPath = "Detecting .minecraft...";
     private bool _minecraftDirValid;
     private readonly List<string> _versions = new();
@@ -55,6 +66,10 @@ internal sealed partial class MainWindow
     // (the preset recount); the request survives until a scan gets to apply it, or an
     // action writes a status of its own.
     private bool _statusUpdatePending;
+
+    // Set when an action writes the status line, so a late recount (the availability check)
+    // leaves the action's text alone.
+    private bool _statusChangedSinceScan;
 
     // Scans, the cleanup of switched-off mods and the installer all work on the mods
     // folder; a scan holding jars open would make the installer's deletes fail.
@@ -127,22 +142,20 @@ internal sealed partial class MainWindow
     {
         if (_isBusy) return;
 
-        _advancedMenu.IncludeXaeroMinimap = _settings.IncludeXaeroMinimap;
-        _advancedMenu.IncludeXaeroWorldMap = _settings.IncludeXaeroWorldMap;
+        // Before the first scan nothing is known about the mods folder yet; the settings
+        // and the pack's defaults decide then.
+        _advancedMenu.SetOptions(ModPresets.GetOptionalMods()
+            .Select(m => new AdvancedMenu.Option(m.Slug, m.Name,
+                _optionalModStates.TryGetValue(m.Slug, out bool on) ? on : _settings.IsOptionalModEnabled(m, presentInModsFolder: false)))
+            .ToList());
         Native.GetWindowRect(_btnAdvanced.Hwnd, out var rect);
         _advancedMenu.Toggle(_hwnd, rect);
     }
 
     private void OnModToggled(string slug, bool isEnabled)
     {
-        if (slug == XaeroMinimapSlug)
-        {
-            _settings.IncludeXaeroMinimap = isEnabled;
-        }
-        else if (slug == XaeroWorldMapSlug)
-        {
-            _settings.IncludeXaeroWorldMap = isEnabled;
-        }
+        _settings.SetOptionalModEnabled(slug, isEnabled);
+        _optionalModStates[slug] = isEnabled;
 
         // Persisted right away: Inject reads these, and a restart must not quietly
         // bring back a mod the user switched off. Save() swallows I/O errors itself.
@@ -187,8 +200,6 @@ internal sealed partial class MainWindow
         UpdateService.CleanupAfterUpdate();
 
         _settings = AppSettings.Load();
-        _advancedMenu.IncludeXaeroMinimap = _settings.IncludeXaeroMinimap;
-        _advancedMenu.IncludeXaeroWorldMap = _settings.IncludeXaeroWorldMap;
 
         _appVersionText = $"v{_updateService.CurrentVersion}";
         _minecraftPath = _minecraftService.GetDefaultMinecraftDirectory();
@@ -345,34 +356,117 @@ internal sealed partial class MainWindow
         if (updateStatusText) _statusUpdatePending = true;
         int sequence = ++_scanSequence;
         string minecraftPath = _minecraftPath;
-        var (_, mods) = await WithModsFolderAsync(() =>
+        var (_, mods, optionalStates) = await WithModsFolderAsync(() =>
             ScanModsAsync(minecraftPath, mcVersion, removeDisabledMods: false));
 
         // A newer scan (another version, a toggle, an injection) was started meanwhile,
         // or the folder it read is no longer the one shown (Browse, or found missing).
         if (sequence != _scanSequence || !IsCurrentFolder(minecraftPath)) return;
 
-        int installedCount = mods.Count(m => m.IsInstalled);
-
-        _modCountText = $"{installedCount} / {mods.Count} Installed";
-        _modCountColor = installedCount == mods.Count ? Theme.Success : Theme.Warning;
-
-        if (_statusUpdatePending)
+        foreach (var (slug, on) in optionalStates)
         {
-            _statusUpdatePending = false;
-            if (installedCount == mods.Count)
+            _optionalModStates[slug] = on;
+        }
+
+        bool writeStatus = _statusUpdatePending;
+        _statusUpdatePending = false;
+        ShowModCounts(mcVersion, mods, writeStatus);
+
+        Fire(() => CheckAvailabilityAsync(minecraftPath, mcVersion, mods, sequence, writeStatus));
+    }
+
+    private void RememberAvailability(string mcVersion, IEnumerable<ModDefinition> mods)
+    {
+        var known = AvailabilityFor(mcVersion);
+        foreach (var mod in mods)
+        {
+            if (mod.Status == NotAvailableStatus) known[mod.Slug] = false;
+            else if (mod.DownloadUrl != null) known[mod.Slug] = true;
+        }
+    }
+
+    private Dictionary<string, bool> AvailabilityFor(string mcVersion)
+    {
+        if (!_availability.TryGetValue(mcVersion, out var known))
+        {
+            known = new Dictionary<string, bool>(StringComparer.OrdinalIgnoreCase);
+            _availability[mcVersion] = known;
+        }
+        return known;
+    }
+
+    /// <summary>
+    /// Shows the mod count, leaving out mods Modrinth has no build of for this version: they
+    /// cannot be installed, so they do not keep a pack from being complete.
+    /// </summary>
+    private void ShowModCounts(string mcVersion, List<ModDefinition> mods, bool writeStatus)
+    {
+        var known = AvailabilityFor(mcVersion);
+        bool Unavailable(ModDefinition m) => !m.IsInstalled && known.TryGetValue(m.Slug, out bool available) && !available;
+
+        var expected = mods.Where(m => !Unavailable(m)).ToList();
+        var notYet = mods.Where(Unavailable).Select(m => m.Name).ToList();
+        int installedCount = expected.Count(m => m.IsInstalled);
+
+        _modCountText = $"{installedCount} / {expected.Count} Installed";
+        _modCountColor = installedCount == expected.Count ? Theme.Success : Theme.Warning;
+
+        if (writeStatus)
+        {
+            _statusChangedSinceScan = false;
+            string note = notYet.Count > 0 ? $" Not available for {mcVersion} yet: {string.Join(", ", notYet)}." : string.Empty;
+            if (installedCount == expected.Count)
             {
                 _statusText = "All performance mods ready!";
-                _subStatusText = $"{installedCount} of {mods.Count} curated FPS mods are installed and up to date.";
+                _subStatusText = $"{installedCount} of {expected.Count} curated FPS mods are installed and up to date.{note}";
             }
             else
             {
                 _statusText = "Ready to inject mods.";
-                _subStatusText = $"Click 'Inject Performance Mods' to install Fabric (if missing) and {mods.Count - installedCount} missing FPS mod(s).";
+                _subStatusText = $"Click 'Inject Performance Mods' to install Fabric (if missing) and {expected.Count - installedCount} missing FPS mod(s).{note}";
             }
         }
 
         Repaint();
+    }
+
+    /// <summary>
+    /// Asks Modrinth, once per version and session, whether the mods a scan found missing have a
+    /// build for <paramref name="mcVersion"/>, and recounts if some do not. Unanswered questions
+    /// (offline, slow) are simply asked again after the next scan.
+    /// </summary>
+    private async Task CheckAvailabilityAsync(
+        string minecraftPath, string mcVersion, List<ModDefinition> mods, int sequence, bool statusWasWritten)
+    {
+        var known = AvailabilityFor(mcVersion);
+        var unknown = mods.Where(m => !m.IsInstalled && !known.ContainsKey(m.Slug)).ToList();
+        if (unknown.Count == 0) return;
+
+        using var timeout = new CancellationTokenSource(AvailabilityCheckTimeout);
+        var answers = await Task.WhenAll(unknown.Select(async m =>
+        {
+            try
+            {
+                return (m.Slug, Available: (bool?)(await _modrinthService.GetLatestVersionFileAsync(m.Slug, mcVersion, timeout.Token) != null));
+            }
+            catch
+            {
+                return (m.Slug, Available: (bool?)null);
+            }
+        }));
+
+        foreach (var (slug, available) in answers)
+        {
+            if (available is { } value) known[slug] = value;
+        }
+
+        // Only the latest scan's numbers may be replaced, and its status line only while no
+        // action or newer scan has written one of its own since.
+        if (answers.Any(a => a.Available == false) && sequence == _scanSequence &&
+            IsCurrentFolder(minecraftPath) && SelectedVersion == mcVersion)
+        {
+            ShowModCounts(mcVersion, mods, statusWasWritten && !_statusChangedSinceScan);
+        }
     }
 
     /// <summary>
@@ -400,21 +494,29 @@ internal sealed partial class MainWindow
     /// runs on the thread pool. The inputs are captured here, on the UI thread. Callers
     /// hold the mods-folder lock (<see cref="WithModsFolderAsync"/>).
     /// </summary>
-    private Task<(string ModsDir, List<ModDefinition> Mods)> ScanModsAsync(
+    private Task<(string ModsDir, List<ModDefinition> Mods, Dictionary<string, bool> OptionalStates)> ScanModsAsync(
         string minecraftPath, string mcVersion, bool removeDisabledMods)
     {
-        bool includeMinimap = _settings.IncludeXaeroMinimap;
-        bool includeWorldMap = _settings.IncludeXaeroWorldMap;
-        var template = ModPresets.GetFilteredModPack(includeMinimap, includeWorldMap);
+        // A copy: the scan runs on the pool while a toggle may change the settings.
+        var settings = _settings.Clone();
+        var pack = ModPresets.GetDefaultFpsModPack();
 
         return Task.Run(() =>
         {
             string modsDir = _minecraftService.GetModsDirectory(minecraftPath);
             if (removeDisabledMods)
             {
-                CleanUpDisabledMods(modsDir, includeMinimap, includeWorldMap);
+                CleanUpDisabledMods(modsDir, pack.Where(m => m.IsOptional && settings.IsOptionalModSwitchedOff(m.Slug)).ToList());
             }
-            return (modsDir, _modManagerService.ScanModsDirectory(modsDir, template, mcVersion));
+
+            // The whole pack is scanned, so an optional mod someone installed by hand is found;
+            // it then counts as switched on and is kept up to date, unless the user switched it off.
+            var scanned = _modManagerService.ScanModsDirectory(modsDir, pack, mcVersion);
+            var optionalStates = scanned
+                .Where(m => m.IsOptional)
+                .ToDictionary(m => m.Slug, m => settings.IsOptionalModEnabled(m, m.InstalledFileName != null), StringComparer.OrdinalIgnoreCase);
+            var mods = scanned.Where(m => !m.IsOptional || optionalStates[m.Slug]).ToList();
+            return (modsDir, mods, optionalStates);
         });
     }
 
@@ -584,18 +686,22 @@ internal sealed partial class MainWindow
 
             // Cleanup, scan and install hold the mods folder as one piece: no refresh
             // may read jars while the installer replaces or deletes them.
-            var result = await WithModsFolderAsync(async () =>
+            var (result, injectedMods) = await WithModsFolderAsync(async () =>
             {
                 // Scan again now: the counts on screen may be from before a toggle, a
                 // version change or files the user moved by hand.
-                var (modsDir, mods) = await ScanModsAsync(minecraftPath, selectedVersion, removeDisabledMods: true);
+                var (modsDir, mods, _) = await ScanModsAsync(minecraftPath, selectedVersion, removeDisabledMods: true);
 
                 SetStatus("Resolving & downloading mods...");
-                return await Task.Run(() => _modManagerService.InstallOrUpdateModsAsync(
+                var outcome = await Task.Run(() => _modManagerService.InstallOrUpdateModsAsync(
                     modsDir, selectedVersion, mods, subStatus, percent));
+                return (outcome, mods);
             });
 
             StopProgressReports();
+
+            // The run looked every mod up, so the count can leave out what has no build yet.
+            RememberAvailability(selectedVersion, injectedMods);
 
             // What is on disk now decides what the summary claims, not what was attempted.
             var fabricAfter = await RecheckFabricAsync(selectedVersion);
@@ -631,25 +737,36 @@ internal sealed partial class MainWindow
 
     /// <summary>
     /// Turns an injection's outcome into the final status and dialog. It only claims
-    /// that everything is configured when the result has no issues at all, Fabric was
-    /// found on disk afterwards and a launcher profile can start it; it only names a
-    /// profile the Fabric check reported.
+    /// that everything is configured when nothing failed, was skipped or warned about,
+    /// Fabric was found on disk afterwards and a launcher profile can start it; it only
+    /// names a profile the Fabric check reported. A mod with no build for this Minecraft
+    /// version yet is not a problem but a note: it is installed once one is published,
+    /// and its old jar being disabled belongs to that.
     /// </summary>
     private static ActionReport BuildInjectionReport(
         string mcVersion, ModInstallResult result, FabricStatus? fabric, bool fabricInstallFailed)
     {
         bool fabricReady = fabric is { IsInstalled: true };
         bool hasProfile = fabricReady && fabric!.ProfileName != null;
-        bool complete = hasProfile && !result.HasIssues;
+        bool hasProblems = result.FailedCount > 0 || result.Skipped.Count > 0 || result.Warnings.Count > 0;
+        bool complete = hasProfile && !hasProblems;
+
+        int availableCount = result.TotalCount - result.UnavailableModNames.Count;
+        string notYet = result.UnavailableModNames.Count > 0
+            ? $" Not available for {mcVersion} yet: {string.Join(", ", result.UnavailableModNames)}."
+            : string.Empty;
 
         string launchHint = fabricReady ? LaunchHint(mcVersion, fabric!) : string.Empty;
 
         var text = new StringBuilder();
         if (complete)
         {
+            string all = result.UnavailableModNames.Count > 0
+                ? $"All {availableCount} performance mods available for Minecraft {mcVersion}"
+                : $"All {result.TotalCount} performance mods";
             text.Append(result.InstalledOrUpdatedCount > 0
-                ? $"All {result.TotalCount} performance mods and Fabric have been successfully configured!\n\n"
-                : $"All {result.TotalCount} performance mods are already installed, up to date, and ready!\n\n");
+                ? $"{all} and Fabric have been successfully configured!\n\n"
+                : $"{all} are already installed, up to date, and ready!\n\n");
         }
         else
         {
@@ -660,7 +777,7 @@ internal sealed partial class MainWindow
         text.Append($"• Injected / updated: {result.InstalledOrUpdatedCount}\n");
         text.Append($"• Already up to date: {result.AlreadyUpToDateCount}\n");
         if (result.FailedCount > 0) text.Append($"• Failed: {result.FailedCount}\n");
-        if (result.UnavailableModNames.Count > 0) text.Append($"• Not available for {mcVersion}: {result.UnavailableModNames.Count}\n");
+        if (result.UnavailableModNames.Count > 0) text.Append($"• Not available for {mcVersion} yet: {result.UnavailableModNames.Count}\n");
         if (result.Skipped.Count > 0) text.Append($"• Skipped: {result.Skipped.Count}\n");
         text.Append(!fabricReady ? "• Fabric Loader: not installed\n"
             : hasProfile ? $"• Fabric Loader: v{fabric!.InstalledLoaderVersion}\n"
@@ -668,7 +785,7 @@ internal sealed partial class MainWindow
 
         AppendSection(text, "Could not be installed:",
             result.Failures.Select(f => $"{f.ModName} ({f.Reason})"));
-        AppendSection(text, $"No release for Minecraft {mcVersion} on Modrinth yet:",
+        AppendSection(text, $"Not available for Minecraft {mcVersion} yet (installed as soon as Modrinth has a build):",
             result.UnavailableModNames);
         AppendSection(text, "Skipped:",
             result.Skipped.Select(s => $"{s.ModName} ({s.Reason})"));
@@ -698,26 +815,25 @@ internal sealed partial class MainWindow
         {
             return result.InstalledOrUpdatedCount > 0
                 ? new ActionReport("Injection Complete!",
-                    $"Successfully injected {result.InstalledOrUpdatedCount} performance mod(s) ({result.AlreadyUpToDateCount} up to date). {launchHint}!",
+                    $"Successfully injected {result.InstalledOrUpdatedCount} performance mod(s) ({result.AlreadyUpToDateCount} up to date). {launchHint}!{notYet}",
                     "Zero-Setup Injection Successful", text.ToString(), IsWarning: false)
                 : new ActionReport("Injection Complete!",
-                    $"All {result.TotalCount} performance mods are already up to date. Ready to play!",
+                    $"All {availableCount} performance mods are already up to date. Ready to play!{notYet}",
                     "Mods Up to Date", text.ToString(), IsWarning: false);
         }
 
-        // Disabled jars always belong to a mod that was not updated in this run (failed,
-        // unavailable or skipped), so they are listed but not counted a second time.
-        int issueCount = result.FailedCount + result.UnavailableModNames.Count + result.Skipped.Count
-                         + result.Warnings.Count;
-        if (issueCount == 0) issueCount = result.DisabledFileNames.Count;
+        // Disabled jars always belong to a mod that was not updated in this run, so they
+        // are listed but not counted a second time; missing builds are notes, not issues.
+        int issueCount = result.FailedCount + result.Skipped.Count + result.Warnings.Count;
 
         string status = !fabricReady ? "Injection finished - Fabric missing"
             : issueCount > 0 ? $"Injection completed with {issueCount} issue(s)"
             : "Injection finished - no launcher profile";
-        string subStatus = $"{result.SuccessCount} of {result.TotalCount} mods ready for MC {mcVersion}."
+        string subStatus = $"{result.SuccessCount} of {availableCount} mods ready for MC {mcVersion}."
                            + (!fabricReady ? " Fabric Loader is not installed."
                                : !hasProfile ? " Create a Fabric installation in the launcher."
-                               : string.Empty);
+                               : string.Empty)
+                           + notYet;
 
         return new ActionReport(status, subStatus, "Injection Finished with Warnings", text.ToString(), IsWarning: true);
     }
@@ -1155,20 +1271,14 @@ internal sealed partial class MainWindow
     }
 
     /// <summary>
-    /// Removes the jars of optional mods the user switched off. Runs on the thread pool.
+    /// Removes the jars of optional mods the user switched off; a mod that is merely off by
+    /// default is never touched, it may have been installed by hand. Runs on the thread pool.
     /// Ownership is decided by Core's predicate, the same one the scanner uses, so a jar
-    /// whose name merely starts like a Xaero mod (an addon, a fork) is left alone.
+    /// whose name merely starts like one of these mods (an addon, a fork) is left alone.
     /// </summary>
-    private static void CleanUpDisabledMods(string modsDir, bool includeMinimap, bool includeWorldMap)
+    private static void CleanUpDisabledMods(string modsDir, IReadOnlyList<ModDefinition> disabledMods)
     {
-        if (!Directory.Exists(modsDir)) return;
-
-        var disabledMods = ModPresets.GetDefaultFpsModPack()
-            .Where(m => (!includeMinimap && m.Slug == XaeroMinimapSlug) ||
-                        (!includeWorldMap && m.Slug == XaeroWorldMapSlug))
-            .ToList();
-
-        if (disabledMods.Count == 0) return;
+        if (!Directory.Exists(modsDir) || disabledMods.Count == 0) return;
 
         foreach (var jar in Directory.GetFiles(modsDir, "*.jar"))
         {
@@ -1183,7 +1293,7 @@ internal sealed partial class MainWindow
     }
 
     /// <summary>An action's own status replaces any status line a scan still meant to write.</summary>
-    private void SetStatus(string text) { _statusUpdatePending = false; _statusText = text; Repaint(); }
+    private void SetStatus(string text) { _statusUpdatePending = false; _statusChangedSinceScan = true; _statusText = text; Repaint(); }
     private void SetSubStatus(string text) { _subStatusText = text; Repaint(); }
 
     private void SetProgress(double percent)

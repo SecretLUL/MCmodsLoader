@@ -1,0 +1,130 @@
+[
+  {
+    "slug": "sodium",
+    "name": "Sodium",
+    "fabricModId": "sodium"
+  },
+  {
+    "slug": "lithium",
+    "name": "Lithium",
+    "fabricModId": "lithium"
+  },
+  {
+    "slug": "ferrite-core",
+    "name": "FerriteCore",
+    "fabricModId": "ferritecore"
+  },
+  {
+    "slug": "modernfix",
+    "name": "ModernFix",
+    "fabricModId": "modernfix"
+  },
+  {
+    "slug": "krypton",
+    "name": "Krypton",
+    "fabricModId": "krypton"
+  },
+  {
+    "slug": "entityculling",
+    "name": "Entity Culling",
+    "fabricModId": "entityculling"
+  },
+  {
+    "slug": "immediatelyfast",
+    "name": "ImmediatelyFast",
+    "fabricModId": "immediatelyfast"
+  },
+  {
+    "slug": "moreculling",
+    "name": "More Culling",
+    "fabricModId": "moreculling"
+  },
+  {
+    "slug": "cull-leaves",
+    "name": "Cull Leaves",
+    "fabricModId": "cullleaves"
+  },
+  {
+    "slug": "badoptimizations",
+    "name": "BadOptimizations",
+    "fabricModId": "badoptimizations"
+  },
+  {
+    "slug": "fast-ip-ping",
+    "name": "Fast IP Ping",
+    "fabricModId": "fastipping"
+  },
+  {
+    "slug": "lambdynamiclights",
+    "name": "LambDynamicLights",
+    "fabricModId": "lambdynlights"
+  },
+  {
+    "slug": "zoomify",
+    "name": "Zoomify",
+    "fabricModId": "zoomify"
+  },
+  {
+    "slug": "appleskin",
+    "name": "AppleSkin",
+    "fabricModId": "appleskin"
+  },
+  {
+    "slug": "modmenu",
+    "name": "Mod Menu",
+    "fabricModId": "modmenu"
+  },
+  {
+    "slug": "fabric-api",
+    "name": "Fabric API",
+    "fabricModId": "fabric-api"
+  },
+  {
+    "slug": "fabric-language-kotlin",
+    "name": "Fabric Language Kotlin",
+    "fabricModId": "fabric-language-kotlin"
+  },
+  {
+    "slug": "cloth-config",
+    "name": "Cloth Config API",
+    "fabricModId": "cloth-config"
+  },
+  {
+    "slug": "yacl",
+    "name": "YetAnotherConfigLib (YACL)",
+    "fabricModId": "yet_another_config_lib_v3"
+  },
+  {
+    "slug": "placeholder-api",
+    "name": "Text Placeholder API",
+    "fabricModId": "placeholder-api"
+  },
+  {
+    "slug": "xaeros-minimap",
+    "name": "Xaero's Minimap",
+    "fabricModId": "xaerominimap",
+    "optional": true,
+    "enabledByDefault": true
+  },
+  {
+    "slug": "xaeros-world-map",
+    "name": "Xaero's World Map",
+    "fabricModId": "xaeroworldmap",
+    "optional": true,
+    "enabledByDefault": true
+  },
+  {
+    "slug": "iris",
+    "name": "Iris Shaders",
+    "fabricModId": "iris",
+    "optional": true,
+    "enabledByDefault": true
+  },
+  {
+    "slug": "distanthorizons",
+    "name": "Distant Horizons",
+    "fabricModId": "distanthorizons",
+    "optional": true,
+    "enabledByDefault": false
+  }
+]

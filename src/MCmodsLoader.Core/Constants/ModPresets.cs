@@ -27,8 +27,12 @@ public static class ModPresets
         return client;
     });
 
+    // v1.2.x clients read default_mods.json from main and treat every entry as mandatory, so the list with
+    // optional mods lives in its own file; the old one is left as it was for them.
+    private const string ResourceFileName = "default_mods.v2.json";
+
     public static string DefaultRemoteUrl { get; set; } =
-        "https://raw.githubusercontent.com/SecretLUL/MCmodsLoader/main/src/MCmodsLoader.Core/Resources/default_mods.json";
+        "https://raw.githubusercontent.com/SecretLUL/MCmodsLoader/main/src/MCmodsLoader.Core/Resources/" + ResourceFileName;
 
     /// <summary>
     /// Where the last good remote list is cached. Settable so tests can keep away from
@@ -58,8 +62,9 @@ public static class ModPresets
 
     private static string GetDefaultLocalCacheFilePath()
     {
+        // Not mods.json: an older build sharing the folder would read optional mods from it as mandatory ones.
         string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MCmodsLoader");
-        return Path.Combine(dir, "mods.json");
+        return Path.Combine(dir, "mods.v2.json");
     }
 
     public static IReadOnlyList<ModDefinition> GetDefaultFpsModPack()
@@ -99,23 +104,29 @@ public static class ModPresets
         }
     }
 
-    public static IReadOnlyList<ModDefinition> GetFilteredModPack(bool includeXaeroMinimap, bool includeXaeroWorldMap)
+    /// <summary>The mandatory mods plus the optional ones <paramref name="isEnabled"/> switches on.</summary>
+    public static IReadOnlyList<ModDefinition> GetFilteredModPack(Func<ModDefinition, bool> isEnabled)
     {
         return GetDefaultFpsModPack()
-            .Where(m => (includeXaeroMinimap || m.Slug != "xaeros-minimap") &&
-                        (includeXaeroWorldMap || m.Slug != "xaeros-world-map"))
+            .Where(m => !m.IsOptional || isEnabled(m))
             .ToList();
+    }
+
+    /// <summary>The mods offered under "Advanced", in list order.</summary>
+    public static IReadOnlyList<ModDefinition> GetOptionalMods()
+    {
+        return GetDefaultFpsModPack().Where(m => m.IsOptional).ToList();
     }
 
     public static List<ModDefinition> LoadFromResource()
     {
         var assembly = typeof(ModPresets).Assembly;
         string? resourceName = assembly.GetManifestResourceNames()
-            .FirstOrDefault(n => n.EndsWith("default_mods.json", StringComparison.OrdinalIgnoreCase));
+            .FirstOrDefault(n => n.EndsWith(ResourceFileName, StringComparison.OrdinalIgnoreCase));
 
         if (resourceName == null)
         {
-            throw new InvalidOperationException("Embedded resource 'default_mods.json' was not found.");
+            throw new InvalidOperationException($"Embedded resource '{ResourceFileName}' was not found.");
         }
 
         using var stream = assembly.GetManifestResourceStream(resourceName);
@@ -161,13 +172,20 @@ public static class ModPresets
                 {
                     Slug = slug.Trim(),
                     Name = name.Trim(),
-                    FabricModId = fabricModId.Trim()
+                    FabricModId = fabricModId.Trim(),
+                    IsOptional = ReadBool(item, "optional") ?? false,
+                    EnabledByDefault = ReadBool(item, "enabledByDefault") ?? true,
                 });
             }
         }
 
         return list;
     }
+
+    private static bool? ReadBool(JsonElement item, string propertyName) =>
+        item.TryGetProperty(propertyName, out var value) && value.ValueKind is JsonValueKind.True or JsonValueKind.False
+            ? value.GetBoolean()
+            : null;
 
     /// <summary>
     /// Rejects lists that are evidently broken: too short to be the curated pack, or
@@ -246,7 +264,8 @@ public static class ModPresets
     // Only the curated fields; ModDefinition also carries scan state that is irrelevant here.
     private static bool SameEntries(IReadOnlyList<ModDefinition> a, IReadOnlyList<ModDefinition> b) =>
         a.Count == b.Count && a.Zip(b).All(p =>
-            p.First.Slug == p.Second.Slug && p.First.Name == p.Second.Name && p.First.FabricModId == p.Second.FabricModId);
+            p.First.Slug == p.Second.Slug && p.First.Name == p.Second.Name && p.First.FabricModId == p.Second.FabricModId &&
+            p.First.IsOptional == p.Second.IsOptional && p.First.EnabledByDefault == p.Second.EnabledByDefault);
 
     public static void ResetToDefault()
     {

@@ -18,7 +18,11 @@ public class ModPresetsTests
         Assert.NotEmpty(mods);
         Assert.True(mods.Count >= 10, "Curated modpack should contain at least 10 core mods.");
         Assert.DoesNotContain(mods, m => m.Slug == "polytone" || m.FabricModId == "polytone");
-        Assert.DoesNotContain(mods, m => m.Slug == "distanthorizons" || m.FabricModId == "distanthorizons");
+
+        // Distant Horizons is part of the pack, but only as an optional mod that is off by default.
+        var distantHorizons = Assert.Single(mods, m => m.Slug == "distanthorizons");
+        Assert.True(distantHorizons.IsOptional);
+        Assert.False(distantHorizons.EnabledByDefault);
 
         foreach (var mod in mods)
         {
@@ -45,24 +49,78 @@ public class ModPresetsTests
         Assert.Contains("cloth-config", slugs);
         Assert.Contains("lambdynamiclights", slugs);
         Assert.Contains("fabric-api", slugs);
+        Assert.Contains("modernfix", slugs);
+        Assert.Contains("krypton", slugs);
+        Assert.All(mods.Where(m => m.Slug is "modernfix" or "krypton"), m => Assert.False(m.IsOptional));
+    }
+
+    [Fact]
+    public void GetOptionalMods_ListsTheAdvancedMenuWithItsDefaults()
+    {
+        var optional = ModPresets.GetOptionalMods().ToDictionary(m => m.Slug, m => m.EnabledByDefault);
+
+        Assert.Equal(
+            new Dictionary<string, bool>
+            {
+                ["xaeros-minimap"] = true,
+                ["xaeros-world-map"] = true,
+                ["iris"] = true,
+                ["distanthorizons"] = false,
+            },
+            optional);
     }
 
     [Theory]
-    [InlineData(true, true, false, false)]
-    [InlineData(false, true, true, false)]
-    [InlineData(true, false, false, true)]
-    [InlineData(false, false, true, true)]
-    public void GetFilteredModPack_FiltersXaeroModsCorrectly(
-        bool includeMinimap, bool includeWorldMap, bool excludesMinimap, bool excludesWorldMap)
+    [InlineData("")]
+    [InlineData("iris")]
+    [InlineData("xaeros-minimap,distanthorizons")]
+    public void GetFilteredModPack_KeepsTheMandatoryModsAndOnlyTheEnabledOptionalOnes(string enabledSlugs)
     {
-        var allMods = ModPresets.GetDefaultFpsModPack();
-        int expectedReduction = (includeMinimap ? 0 : 1) + (includeWorldMap ? 0 : 1);
-        int expectedCount = allMods.Count - expectedReduction;
+        string[] enabled = enabledSlugs.Split(',', StringSplitOptions.RemoveEmptyEntries);
+        var all = ModPresets.GetDefaultFpsModPack();
 
-        var mods = ModPresets.GetFilteredModPack(includeMinimap, includeWorldMap);
-        Assert.Equal(expectedCount, mods.Count);
-        Assert.Equal(excludesMinimap, !mods.Any(m => m.Slug == "xaeros-minimap"));
-        Assert.Equal(excludesWorldMap, !mods.Any(m => m.Slug == "xaeros-world-map"));
+        var mods = ModPresets.GetFilteredModPack(m => enabled.Contains(m.Slug));
+
+        Assert.Equal(all.Count(m => !m.IsOptional) + enabled.Length, mods.Count);
+        Assert.All(all.Where(m => !m.IsOptional), m => Assert.Contains(mods, x => x.Slug == m.Slug));
+        Assert.Equal(enabled.OrderBy(s => s), mods.Where(m => m.IsOptional).Select(m => m.Slug).OrderBy(s => s));
+    }
+
+    [Fact]
+    public void ParseJson_ReadsOptionalModsAndTheirDefault()
+    {
+        var parsed = ModPresets.ParseJson("""
+            [
+              { "slug": "a", "name": "A", "fabricModId": "a" },
+              { "slug": "b", "name": "B", "fabricModId": "b", "optional": true },
+              { "slug": "c", "name": "C", "fabricModId": "c", "optional": true, "enabledByDefault": false },
+              { "slug": "d", "name": "D", "fabricModId": "d", "optional": "yes", "enabledByDefault": 0 }
+            ]
+            """);
+
+        Assert.Equal(new[] { (false, true), (true, true), (true, false), (false, true) },
+            parsed.Select(m => (m.IsOptional, m.EnabledByDefault)));
+    }
+
+    /// <summary>
+    /// v1.2.x clients download Resources/default_mods.json from main and install every entry
+    /// as a mandatory mod. It must stay exactly as they knew it: optional mods only belong in
+    /// default_mods.v2.json.
+    /// </summary>
+    [Fact]
+    public void LegacyModListForOlderClients_StaysUnchanged()
+    {
+        string? dir = AppContext.BaseDirectory;
+        while (dir != null && !File.Exists(Path.Combine(dir, "MCmodsLoader.sln")))
+            dir = Path.GetDirectoryName(dir);
+        Assert.NotNull(dir);
+
+        var legacy = ModPresets.ParseJson(File.ReadAllText(
+            Path.Combine(dir!, "src", "MCmodsLoader.Core", "Resources", "default_mods.json")));
+
+        Assert.Equal(20, legacy.Count);
+        Assert.Contains(legacy, m => m.Slug == "xaeros-minimap");
+        Assert.DoesNotContain(legacy, m => m.Slug is "iris" or "distanthorizons" or "modernfix" or "krypton");
     }
 
     [Fact]
@@ -122,35 +180,79 @@ public class AppSettingsTests : IDisposable
     }
 
     [Fact]
-    public void Load_WhenFileMissing_ReturnsDefaultValues()
+    public void Load_WhenFileMissing_HasNoChoices()
     {
         var settings = AppSettings.Load(_tempFile);
-        Assert.True(settings.IncludeXaeroMinimap);
-        Assert.True(settings.IncludeXaeroWorldMap);
+        Assert.Empty(settings.OptionalModChoices);
     }
 
     [Fact]
-    public void SaveAndLoad_PersistsValuesCorrectly()
+    public void SaveAndLoad_PersistsTheOptionalModChoices()
     {
-        var settings = new AppSettings
-        {
-            IncludeXaeroMinimap = false,
-            IncludeXaeroWorldMap = true
-        };
+        var settings = new AppSettings();
+        settings.SetOptionalModEnabled("xaeros-minimap", false);
+        settings.SetOptionalModEnabled("distanthorizons", true);
         settings.Save(_tempFile);
 
         Assert.True(File.Exists(_tempFile));
 
         var loaded = AppSettings.Load(_tempFile);
-        Assert.False(loaded.IncludeXaeroMinimap);
-        Assert.True(loaded.IncludeXaeroWorldMap);
+        Assert.False(loaded.OptionalModChoices["xaeros-minimap"]);
+        Assert.True(loaded.OptionalModChoices["distanthorizons"]);
 
-        loaded.IncludeXaeroWorldMap = false;
+        loaded.SetOptionalModEnabled("distanthorizons", false);
         loaded.Save(_tempFile);
 
         var loadedAgain = AppSettings.Load(_tempFile);
-        Assert.False(loadedAgain.IncludeXaeroMinimap);
-        Assert.False(loadedAgain.IncludeXaeroWorldMap);
+        Assert.False(loadedAgain.OptionalModChoices["xaeros-minimap"]);
+        Assert.False(loadedAgain.OptionalModChoices["distanthorizons"]);
+    }
+
+    [Fact]
+    public void Load_TakesOverTheXaeroSwitchesOfEarlierBuilds()
+    {
+        File.WriteAllText(_tempFile, """{ "includeXaeroMinimap": false, "includeXaeroWorldMap": true }""");
+
+        var loaded = AppSettings.Load(_tempFile);
+
+        Assert.False(loaded.OptionalModChoices["xaeros-minimap"]);
+        Assert.True(loaded.OptionalModChoices["xaeros-world-map"]);
+    }
+
+    [Theory]
+    // Never switched: the pack's default decides, unless a jar of the mod is already installed.
+    [InlineData(null, true, false, true)]
+    [InlineData(null, false, false, false)]
+    [InlineData(null, false, true, true)]
+    // The user's own choice always wins.
+    [InlineData(false, true, true, false)]
+    [InlineData(true, false, false, true)]
+    public void IsOptionalModEnabled_PrefersTheChoiceThenAnInstalledJarThenTheDefault(
+        bool? choice, bool enabledByDefault, bool presentInModsFolder, bool expected)
+    {
+        var settings = new AppSettings();
+        if (choice is { } value) settings.SetOptionalModEnabled("distanthorizons", value);
+        var mod = new ModDefinition
+        {
+            Slug = "distanthorizons", Name = "Distant Horizons", FabricModId = "distanthorizons",
+            IsOptional = true, EnabledByDefault = enabledByDefault,
+        };
+
+        Assert.Equal(expected, settings.IsOptionalModEnabled(mod, presentInModsFolder));
+    }
+
+    [Fact]
+    public void IsOptionalModSwitchedOff_OnlyAfterTheUserSwitchedItOff()
+    {
+        var settings = new AppSettings();
+        Assert.False(settings.IsOptionalModSwitchedOff("distanthorizons"));
+
+        settings.SetOptionalModEnabled("distanthorizons", false);
+        Assert.True(settings.IsOptionalModSwitchedOff("distanthorizons"));
+
+        var copy = settings.Clone();
+        settings.SetOptionalModEnabled("distanthorizons", true);
+        Assert.True(copy.IsOptionalModSwitchedOff("distanthorizons"));
     }
 }
 
@@ -841,10 +943,13 @@ public class ModManagerServiceTests : IDisposable
         ("BadOptimizations-2.4.1-26.2-fabric.jar", "badoptimizations", "2.4.1"),
         ("cloth-config-26.2.155.jar", "cloth-config", "26.2.155"),
 
+        // Optional mods of the pack, under the names their jars really have.
+        ("iris-fabric-1.11.4+mc26.2.jar", "iris", "1.11.4+mc26.2"),
+        ("DistantHorizons-3.3.0-26.2-fabric-neoforge.jar", "distanthorizons", "3.3.0"),
+
         // Not part of the curated pack: it has to be left alone rather than claimed
         // by one of the presets.
         ("polytone-26.2-6.5.0-fabric.jar", "polytone", "26.2-6.5.0"),
-        ("DistantHorizons-3.3.0.jar", "distanthorizons", "3.3.0"),
     };
 
     /// <summary>Writes a minimal but realistic Fabric mod jar into <paramref name="directory"/>.</summary>
@@ -908,7 +1013,7 @@ public class ModManagerServiceTests : IDisposable
 
         Assert.Equal(curatedPack.Count, mods.Count);
         Assert.DoesNotContain(mods, m => m.Slug == "polytone" || m.FabricModId == "polytone");
-        Assert.DoesNotContain(mods, m => m.Slug == "distanthorizons" || m.FabricModId == "distanthorizons");
+        Assert.Equal("DistantHorizons-3.3.0-26.2-fabric-neoforge.jar", mods.Single(m => m.Slug == "distanthorizons").InstalledFileName);
 
         var undetected = mods.Where(m => !m.IsInstalled).Select(m => $"{m.Name} (slug: {m.Slug}, id: {m.FabricModId})").ToList();
         Assert.True(undetected.Count == 0, $"The following mods were not detected: {string.Join(", ", undetected)}");
@@ -1031,6 +1136,11 @@ public class ModManagerServiceTests : IDisposable
             return Task.FromResult<ModrinthVersionFile?>(null);
         }
 
+        public Task<ModrinthVersionFile?> GetVersionFileAsync(string versionId, string mcVersion, CancellationToken ct = default)
+        {
+            return Task.FromResult<ModrinthVersionFile?>(null);
+        }
+
         public Task<IReadOnlyList<ModrinthProject>> GetProjectsAsync(IEnumerable<string> idsOrSlugs, CancellationToken ct = default)
         {
             return Task.FromResult<IReadOnlyList<ModrinthProject>>(Array.Empty<ModrinthProject>());
@@ -1045,6 +1155,11 @@ public class ModManagerServiceTests : IDisposable
     private class FailingDownloadModrinthService : IModrinthService
     {
         public Task<ModrinthVersionFile?> GetLatestVersionFileAsync(string projectSlugOrId, string mcVersion, CancellationToken ct = default)
+        {
+            return Task.FromResult<ModrinthVersionFile?>(null);
+        }
+
+        public Task<ModrinthVersionFile?> GetVersionFileAsync(string versionId, string mcVersion, CancellationToken ct = default)
         {
             return Task.FromResult<ModrinthVersionFile?>(null);
         }

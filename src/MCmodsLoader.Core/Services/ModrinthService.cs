@@ -9,11 +9,17 @@ namespace MCmodsLoader.Core.Services;
 public interface IModrinthService
 {
     /// <summary>
-    /// Returns the newest Fabric jar of the project for <paramref name="mcVersion"/>, or null when Modrinth answered
-    /// but has no such version (an unknown project counts as "not available" too). Network/HTTP errors and timeouts
-    /// are thrown, so they can't be mistaken for "not available".
+    /// Returns the newest Fabric jar of the project for <paramref name="mcVersion"/>, preferring releases over alpha and
+    /// beta builds, or null when Modrinth answered but has no such version (an unknown project counts as "not available"
+    /// too). Network/HTTP errors and timeouts are thrown, so they can't be mistaken for "not available".
     /// </summary>
     Task<ModrinthVersionFile?> GetLatestVersionFileAsync(string projectSlugOrId, string mcVersion, CancellationToken ct = default);
+
+    /// <summary>
+    /// Returns the jar of one specific Modrinth version, or null if it doesn't exist or isn't a Fabric build for
+    /// <paramref name="mcVersion"/>. Errors are thrown as for <see cref="GetLatestVersionFileAsync"/>.
+    /// </summary>
+    Task<ModrinthVersionFile?> GetVersionFileAsync(string versionId, string mcVersion, CancellationToken ct = default);
 
     /// <summary>Looks up projects by id or slug. Unknown ones are simply missing from the result.</summary>
     Task<IReadOnlyList<ModrinthProject>> GetProjectsAsync(IEnumerable<string> idsOrSlugs, CancellationToken ct = default);
@@ -53,23 +59,55 @@ public class ModrinthService : IModrinthService
         if (doc == null || doc.RootElement.ValueKind != JsonValueKind.Array)
             return null;
 
-        // Versions are sorted newest first; take the first one that ships a usable jar
+        // Versions are sorted newest first. The newest release that ships a usable jar wins; an alpha or
+        // beta is only taken when this Minecraft version has no release at all. A newer Sodium alpha would
+        // otherwise be installed next to an Iris that was built for the Sodium release before it.
+        (JsonElement Version, JsonElement File)? preRelease = null;
         foreach (var version in doc.RootElement.EnumerateArray())
         {
             if (version.ValueKind != JsonValueKind.Object ||
-                !version.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array)
+                !version.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array ||
+                ChooseJar(files) is not { } file)
             {
                 continue;
             }
 
-            if (ChooseJar(files) is { } file)
-            {
+            if (IsRelease(version))
                 return await ResolveDependencyProjectsAsync(BuildVersionFile(version, file), ct).ConfigureAwait(false);
-            }
+
+            preRelease ??= (version, file);
         }
 
-        return null;
+        return preRelease is { } newest
+            ? await ResolveDependencyProjectsAsync(BuildVersionFile(newest.Version, newest.File), ct).ConfigureAwait(false)
+            : null;
     }
+
+    public async Task<ModrinthVersionFile?> GetVersionFileAsync(string versionId, string mcVersion, CancellationToken ct = default)
+    {
+        using var doc = await GetJsonAsync($"https://api.modrinth.com/v2/version/{Uri.EscapeDataString(versionId)}", ct).ConfigureAwait(false);
+        if (doc == null || doc.RootElement.ValueKind != JsonValueKind.Object)
+            return null;
+
+        var version = doc.RootElement;
+        if (!ListContains(version, "game_versions", mcVersion) || !ListContains(version, "loaders", "fabric") ||
+            !version.TryGetProperty("files", out var files) || files.ValueKind != JsonValueKind.Array ||
+            ChooseJar(files) is not { } file)
+        {
+            return null;
+        }
+
+        return await ResolveDependencyProjectsAsync(BuildVersionFile(version, file), ct).ConfigureAwait(false);
+    }
+
+    // A version without a type is treated as a release, as Modrinth did before it had types.
+    private static bool IsRelease(JsonElement version) =>
+        GetString(version, "version_type") is not { } type || type.Equals("release", StringComparison.OrdinalIgnoreCase);
+
+    private static bool ListContains(JsonElement element, string propertyName, string value) =>
+        element.TryGetProperty(propertyName, out var list) && list.ValueKind == JsonValueKind.Array &&
+        list.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.String &&
+                                          string.Equals(item.GetString(), value, StringComparison.OrdinalIgnoreCase));
 
     /// <summary>Required dependencies that only name a version get their project id from GET /v2/version/{id}.</summary>
     private async Task<ModrinthVersionFile> ResolveDependencyProjectsAsync(ModrinthVersionFile file, CancellationToken ct)
@@ -315,6 +353,7 @@ public class ModrinthService : IModrinthService
             Sha1 = sha1,
             Sha512 = sha512,
             ProjectId = GetString(version, "project_id"),
+            VersionId = GetString(version, "id"),
             VersionNumber = GetString(version, "version_number"),
             Dependencies = dependencies,
         };

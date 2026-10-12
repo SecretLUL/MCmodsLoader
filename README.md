@@ -20,7 +20,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 * **No Extra Launchers:** Your friends keep using the standard official Minecraft Launcher they already know and trust.
 * **Zero Configuration:** Automatically locates `.minecraft`, determines compatible mod versions, and registers launcher profiles.
 * **Automatic Fabric Setup:** If Fabric is missing, the tool automatically downloads and configures the latest Fabric Loader for the selected Minecraft version.
-* **Direct Modrinth Integration:** Downloads the latest, primary release jars directly from the official [Modrinth API](https://modrinth.com/).
+* **Direct Modrinth Integration:** Downloads the newest stable release of each mod directly from the official [Modrinth API](https://modrinth.com/); an alpha or beta is only used when a Minecraft version has nothing else, and builds a mod depends on exactly (such as the Sodium version Iris was made for) are respected.
 * **Conflict Prevention:** Automatically purges outdated mod jars when updating to avoid duplicate file crashes.
 * **Built-in Self-Updater:** Checks GitHub releases on startup; warns you when an update is ready and updates itself in one click.
 
@@ -38,13 +38,19 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 
 ## 📦 Curated Modpack
 
-MCmodsLoader comes pre-configured with 20 performance and quality-of-life mods:
+MCmodsLoader installs 20 mandatory mods and offers 4 optional ones.
+
+### Mandatory mods
+
+Always installed. A mod that has no build for the selected Minecraft version yet is skipped without counting as an error, and is installed as soon as Modrinth has one. ModernFix, for example, is not yet available for the newest versions.
 
 | Mod | Category | Purpose |
 | :--- | :--- | :--- |
 | **Sodium** | Performance | State-of-the-art rendering engine delivering colossal FPS boosts and stutter reduction. |
 | **Lithium** | Performance | General-purpose optimization for physics, AI, chunk loading, and block ticking. |
 | **FerriteCore** | Performance | Memory usage optimizations that drastically cut down RAM consumption. |
+| **ModernFix** | Performance | Faster game launch and world loading, lower memory use, and many small fixes. |
+| **Krypton** | Performance | Optimizes the networking stack, cutting CPU and memory overhead for smoother multiplayer. |
 | **Entity Culling** | Performance | Skips rendering of hidden entities and tile entities for higher framerates. |
 | **ImmediatelyFast** | Performance | Accelerates immediate mode rendering, optimizing HUD, fonts, and particle rendering. |
 | **More Culling** | Performance | Aggressively skips rendering invisible block faces, item frame backs, and sign texts. |
@@ -54,14 +60,23 @@ MCmodsLoader comes pre-configured with 20 performance and quality-of-life mods:
 | **LambDynamicLights** | Quality of Life | Dynamic hand-held and entity lighting effects with high performance. |
 | **Zoomify** | Quality of Life | Smooth, highly configurable camera zoom with mouse wheel support. |
 | **AppleSkin** | Quality of Life | Displays food saturation, exhaustion levels, and potential health restoration in the HUD. |
-| **Xaero's Minimap** | Quality of Life | Lightweight, smooth in-game minimap with waypoint markers and entity radar. |
-| **Xaero's World Map** | Quality of Life | Fullscreen map showing all explored terrain and waypoints. |
 | **Mod Menu** | Quality of Life | In-game mod list and settings interface accessible right from the pause menu. |
 | **Fabric API** | Library | Essential core hooks required by virtually all modern Fabric mods. |
 | **Fabric Language Kotlin** | Library | Kotlin language adapter and runtime required by modern Kotlin-based mods. |
 | **Cloth Config API** | Library | Configuration screen API required by More Culling and companion mods. |
 | **YetAnotherConfigLib (YACL)** | Library | Configuration and GUI framework required by Zoomify and companion mods. |
 | **Text Placeholder API** | Library | Text formatting and placeholder parsing utility for UI and HUD mods. |
+
+### Optional mods
+
+Switched on or off under **Advanced** in the app; the choice is remembered. A mod you switch off is removed on the next injection. An optional mod you installed yourself is picked up as switched on and kept up to date from then on.
+
+| Mod | On by default | Purpose |
+| :--- | :---: | :--- |
+| **Xaero's Minimap** | Yes | Lightweight, smooth in-game minimap with waypoint markers and entity radar. |
+| **Xaero's World Map** | Yes | Fullscreen map showing all explored terrain and waypoints. |
+| **Iris Shaders** | Yes | Shader pack support built on Sodium; costs next to nothing until a shader pack is turned on. |
+| **Distant Horizons** | No | Level-of-detail rendering for very far view distances. Demanding on CPU, GPU and memory, so it is opt-in. |
 
 ---
 
