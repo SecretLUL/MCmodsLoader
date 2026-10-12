@@ -51,7 +51,8 @@ public class ModPresetsTests
         Assert.Contains("fabric-api", slugs);
         Assert.Contains("modernfix", slugs);
         Assert.Contains("krypton", slugs);
-        Assert.All(mods.Where(m => m.Slug is "modernfix" or "krypton"), m => Assert.False(m.IsOptional));
+        Assert.Contains("iris", slugs);
+        Assert.All(mods.Where(m => m.Slug is "modernfix" or "krypton" or "iris"), m => Assert.False(m.IsOptional));
     }
 
     [Fact]
@@ -64,7 +65,6 @@ public class ModPresetsTests
             {
                 ["xaeros-minimap"] = true,
                 ["xaeros-world-map"] = true,
-                ["iris"] = true,
                 ["distanthorizons"] = false,
             },
             optional);
@@ -72,7 +72,7 @@ public class ModPresetsTests
 
     [Theory]
     [InlineData("")]
-    [InlineData("iris")]
+    [InlineData("xaeros-world-map")]
     [InlineData("xaeros-minimap,distanthorizons")]
     public void GetFilteredModPack_KeepsTheMandatoryModsAndOnlyTheEnabledOptionalOnes(string enabledSlugs)
     {
@@ -943,7 +943,7 @@ public class ModManagerServiceTests : IDisposable
         ("BadOptimizations-2.4.1-26.2-fabric.jar", "badoptimizations", "2.4.1"),
         ("cloth-config-26.2.155.jar", "cloth-config", "26.2.155"),
 
-        // Optional mods of the pack, under the names their jars really have.
+        // Iris and the optional Distant Horizons, under the names their jars really have.
         ("iris-fabric-1.11.4+mc26.2.jar", "iris", "1.11.4+mc26.2"),
         ("DistantHorizons-3.3.0-26.2-fabric-neoforge.jar", "distanthorizons", "3.3.0"),
 

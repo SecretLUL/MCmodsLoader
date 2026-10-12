@@ -38,7 +38,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 
 ## 📦 Curated Modpack
 
-MCmodsLoader installs 20 mandatory mods and offers 4 optional ones.
+MCmodsLoader installs 21 mandatory mods and offers 3 optional ones.
 
 ### Mandatory mods
 
@@ -56,6 +56,7 @@ Always installed. A mod that has no build for the selected Minecraft version yet
 | **More Culling** | Performance | Aggressively skips rendering invisible block faces, item frame backs, and sign texts. |
 | **Cull Leaves** | Performance | Culls interior faces of leaf blocks for substantial FPS boosts in forest biomes. |
 | **BadOptimizations** | Performance | Micro-optimizations for lightmap caching, sky color sampling, and client tick loops. |
+| **Iris Shaders** | Graphics | Shader pack support built on Sodium; costs next to nothing until a shader pack is turned on. |
 | **Fast IP Ping** | Quality of Life | Pings multiplayer servers concurrently in the background for instant server list loading. |
 | **LambDynamicLights** | Quality of Life | Dynamic hand-held and entity lighting effects with high performance. |
 | **Zoomify** | Quality of Life | Smooth, highly configurable camera zoom with mouse wheel support. |
@@ -75,7 +76,6 @@ Switched on or off under **Advanced** in the app; the choice is remembered. A mo
 | :--- | :---: | :--- |
 | **Xaero's Minimap** | Yes | Lightweight, smooth in-game minimap with waypoint markers and entity radar. |
 | **Xaero's World Map** | Yes | Fullscreen map showing all explored terrain and waypoints. |
-| **Iris Shaders** | Yes | Shader pack support built on Sodium; costs next to nothing until a shader pack is turned on. |
 | **Distant Horizons** | No | Level-of-detail rendering for very far view distances. Demanding on CPU, GPU and memory, so it is opt-in. |
 
 ---

@@ -50,6 +50,11 @@
     "fabricModId": "badoptimizations"
   },
   {
+    "slug": "iris",
+    "name": "Iris Shaders",
+    "fabricModId": "iris"
+  },
+  {
     "slug": "fast-ip-ping",
     "name": "Fast IP Ping",
     "fabricModId": "fastipping"
@@ -110,13 +115,6 @@
     "slug": "xaeros-world-map",
     "name": "Xaero's World Map",
     "fabricModId": "xaeroworldmap",
-    "optional": true,
-    "enabledByDefault": true
-  },
-  {
-    "slug": "iris",
-    "name": "Iris Shaders",
-    "fabricModId": "iris",
     "optional": true,
     "enabledByDefault": true
   },
