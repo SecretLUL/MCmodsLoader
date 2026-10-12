@@ -13,9 +13,9 @@ internal static class Native
     public const uint WM_DESTROY = 0x0002, WM_PAINT = 0x000F, WM_CLOSE = 0x0010,
                       WM_ERASEBKGND = 0x0014, WM_GETMINMAXINFO = 0x0024,
                       WM_DRAWITEM = 0x002B,
-                      WM_SETFONT = 0x0030, WM_COMMAND = 0x0111,
+                      WM_COMMAND = 0x0111,
                       WM_MOUSEMOVE = 0x0200, WM_MOUSELEAVE = 0x02A3, WM_DPICHANGED = 0x02E0,
-                      WM_APP = 0x8000, WM_KILLFOCUS = 0x0008, WM_KEYDOWN = 0x0100,
+                      WM_APP = 0x8000, WM_KEYDOWN = 0x0100,
                       WM_GETDLGCODE = 0x0087, WM_LBUTTONDOWN = 0x0201, WM_MOUSEWHEEL = 0x020A,
                       WM_CAPTURECHANGED = 0x0215;
 
@@ -58,7 +58,9 @@ internal static class Native
     public const uint TME_LEAVE = 0x0002;
     public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     public const uint SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
-    public const uint MB_OK = 0x0, MB_ICONERROR = 0x10, MB_ICONWARNING = 0x30, MB_ICONINFORMATION = 0x40;
+    public const uint MB_OK = 0x0, MB_YESNO = 0x4, MB_ICONERROR = 0x10, MB_ICONWARNING = 0x30, MB_ICONINFORMATION = 0x40,
+                      MB_DEFBUTTON2 = 0x100;
+    public const int IDYES = 6;
     public const uint BIF_RETURNONLYFSDIRS = 0x0001, BIF_EDITBOX = 0x0010, BIF_NEWDIALOGSTYLE = 0x0040;
     public const uint SRCCOPY = 0x00CC0020;
     public const uint WM_SETCURSOR = 0x0020;
@@ -187,6 +189,12 @@ internal static class Native
     [DllImport("user32.dll")] public static extern bool InvalidateRect(nint hwnd, nint rect, bool erase);
     [DllImport("user32.dll")] public static extern bool EnableWindow(nint hwnd, bool enable);
     [DllImport("user32.dll")] public static extern nint SetFocus(nint hwnd);
+    [DllImport("user32.dll")] public static extern nint GetFocus();
+    [DllImport("user32.dll")] public static extern nint GetActiveWindow();
+    [DllImport("user32.dll")] public static extern bool IsChild(nint parent, nint hwnd);
+    [DllImport("user32.dll")] public static extern bool IsWindow(nint hwnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowEnabled(nint hwnd);
+    [DllImport("user32.dll")] public static extern bool IsWindowVisible(nint hwnd);
     [DllImport("user32.dll")] public static extern int GetSystemMetrics(int index);
     [DllImport("user32.dll")] public static extern uint GetDpiForWindow(nint hwnd);
     [DllImport("user32.dll")] public static extern bool AdjustWindowRectExForDpi(ref RECT rect, uint style, bool menu, uint exStyle, uint dpi);
@@ -222,6 +230,9 @@ internal static class Native
     [DllImport("gdi32.dll")] public static extern nint CreateCompatibleBitmap(nint hdc, int w, int h);
     [DllImport("gdi32.dll")] public static extern bool BitBlt(nint dst, int x, int y, int w, int h, nint src, int sx, int sy, uint rop);
     [DllImport("gdi32.dll")] public static extern bool DeleteDC(nint hdc);
+    [DllImport("gdi32.dll")] public static extern nint GetStockObject(int index);
+
+    public const int NULL_BRUSH = 5;
 
     // ---- comctl32 / uxtheme / dwmapi / shell32 ---------------------------
     [DllImport("comctl32.dll")] public static extern bool InitCommonControlsEx(ref INITCOMMONCONTROLSEX icc);
@@ -261,17 +272,13 @@ internal static class Native
     [DllImport("user32.dll")]
     public static extern bool GetMonitorInfoW(nint monitor, ref MONITORINFO info);
 
-    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
-    public static extern nint LoadLibraryW(string name);
-
-    /// <summary>Resolves an export by ordinal; the name pointer is the ordinal value itself.</summary>
-    [DllImport("kernel32.dll", EntryPoint = "GetProcAddress", SetLastError = true)]
-    public static extern nint GetProcAddressByOrdinal(nint module, nint ordinal);
-
     // ---- Helpers ---------------------------------------------------------
     /// <summary>COLORREF is 0x00BBGGRR, so the byte order is reversed from HTML hex.</summary>
     public static uint FromHex(uint rrggbb) =>
         (uint)(((rrggbb >> 16) & 0xFF) | (((rrggbb >> 8) & 0xFF) << 8) | ((rrggbb & 0xFF) << 16));
+
+    /// <summary>Bit 30 of a WM_KEYDOWN lParam: the key was already down (auto-repeat).</summary>
+    public static bool IsKeyRepeat(nint lParam) => (lParam & 0x40000000) != 0;
 
     public static int LoWord(nint value) => (short)(value & 0xFFFF);
     public static int HiWord(nint value) => (short)((value >> 16) & 0xFFFF);

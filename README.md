@@ -73,7 +73,7 @@ MCmodsLoader comes pre-configured with 20 performance and quality-of-life mods:
   * `MinecraftService`: Automatically resolves `%APPDATA%\.minecraft`, detects installed versions, and retrieves game version manifests.
   * `ModrinthService`: Asynchronous HTTP client targeting the Modrinth v2 REST API to locate primary Fabric-compatible jar releases.
   * `ModManagerService`: Inspects existing mods (reads internal `fabric.mod.json`), removes obsolete jars, and downloads updates.
-  * `UpdateService`: Checks GitHub REST API for new releases and handles atomic batch script hot-swaps.
+  * `UpdateService`: Checks GitHub REST API for new releases, verifies the downloaded executable (PE header and the release asset's SHA-256 digest), and swaps it in by renaming the running executable to `MCmodsLoader.old.exe`, which the new build deletes on startup.
 * **Testing:** xUnit test suite (`MCmodsLoader.Tests`) covering version parsing, zip metadata inspection, mod presets, and directory validation.
 
 ---
@@ -99,6 +99,9 @@ dotnet test
 # Build debug binaries
 dotnet build
 ```
+The version is taken from the newest Git tag (`v1.2.0`, or `v1.3.0-beta.1` for a
+pre-release). A source tree without tags, such as a ZIP download or a shallow clone,
+still builds and is stamped with the SDK default `1.0.0`.
 
 ### Publish the Native Executable
 To produce the standalone portable `.exe` for distribution:

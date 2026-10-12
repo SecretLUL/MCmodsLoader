@@ -6,6 +6,7 @@ namespace MCmodsLoader.UI;
 internal sealed class AdvancedMenu
 {
     private const string PopupClassName = "MCmodsLoaderAdvancedMenu";
+    private const int RowCount = 2;
     private static readonly WndProcDelegate PopupProcedure = StaticPopupProc;
     private delegate nint WndProcDelegate(nint hwnd, uint msg, nint wParam, nint lParam);
     private static AdvancedMenu? _openMenu;
@@ -92,6 +93,62 @@ internal sealed class AdvancedMenu
         Native.ShowWindow(_popup, Native.SW_HIDE);
     }
 
+    /// <summary>
+    /// Keyboard input while the menu is open. The popup is shown without activation and
+    /// never gets the focus, so the message loop passes key presses in from outside.
+    /// Returns true when the key was consumed.
+    /// </summary>
+    public bool HandleKey(int virtualKey, bool isRepeat)
+    {
+        if (!IsOpen) return false;
+
+        switch (virtualKey)
+        {
+            case Native.VK_ESCAPE:
+                Close();
+                return true;
+
+            case Native.VK_DOWN:
+                SetHoverRow(_hoverRow < 0 ? 0 : Math.Min(_hoverRow + 1, RowCount - 1));
+                return true;
+
+            case Native.VK_UP:
+                SetHoverRow(_hoverRow < 0 ? RowCount - 1 : Math.Max(_hoverRow - 1, 0));
+                return true;
+
+            case Native.VK_SPACE or Native.VK_RETURN:
+                // A held key would otherwise flip the row (a settings save and a full
+                // mods-folder scan each) many times a second.
+                if (_hoverRow >= 0 && !isRepeat) ToggleRow(_hoverRow);
+                return true;
+        }
+
+        return false;
+    }
+
+    private void SetHoverRow(int row)
+    {
+        if (row == _hoverRow) return;
+        _hoverRow = row;
+        Native.InvalidateRect(_popup, 0, false);
+    }
+
+    private void ToggleRow(int row)
+    {
+        if (row == 0)
+        {
+            IncludeXaeroMinimap = !IncludeXaeroMinimap;
+            ModToggled?.Invoke("xaeros-minimap", IncludeXaeroMinimap);
+        }
+        else if (row == 1)
+        {
+            IncludeXaeroWorldMap = !IncludeXaeroWorldMap;
+            ModToggled?.Invoke("xaeros-world-map", IncludeXaeroWorldMap);
+        }
+
+        Native.InvalidateRect(_popup, 0, false);
+    }
+
     private void EnsurePopupWindow()
     {
         if (_popup != 0) return;
@@ -117,9 +174,20 @@ internal sealed class AdvancedMenu
     }
 
     private static nint StaticPopupProc(nint hwnd, uint msg, nint wParam, nint lParam)
-        => _openMenu is { } menu
-            ? menu.PopupProc(hwnd, msg, wParam, lParam)
-            : Native.DefWindowProcW(hwnd, msg, wParam, lParam);
+    {
+        if (_openMenu is not { } menu) return Native.DefWindowProcW(hwnd, msg, wParam, lParam);
+
+        try
+        {
+            return menu.PopupProc(hwnd, msg, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            // An exception escaping into user32 ends a NativeAOT process on the spot.
+            MainWindow.ReportCallbackError(msg, ex);
+            return 0;
+        }
+    }
 
     private nint PopupProc(nint hwnd, uint msg, nint wParam, nint lParam)
     {
@@ -149,17 +217,9 @@ internal sealed class AdvancedMenu
                 int y = Native.HiWord(lParam);
                 int row = RowFromPoint(hwnd, x, y);
 
-                if (row == 0)
+                if (row >= 0)
                 {
-                    IncludeXaeroMinimap = !IncludeXaeroMinimap;
-                    ModToggled?.Invoke("xaeros-minimap", IncludeXaeroMinimap);
-                    Native.InvalidateRect(hwnd, 0, false);
-                }
-                else if (row == 1)
-                {
-                    IncludeXaeroWorldMap = !IncludeXaeroWorldMap;
-                    ModToggled?.Invoke("xaeros-world-map", IncludeXaeroWorldMap);
-                    Native.InvalidateRect(hwnd, 0, false);
+                    ToggleRow(row);
                 }
                 else
                 {
@@ -172,8 +232,7 @@ internal sealed class AdvancedMenu
                 return 0;
             }
 
-            case Native.WM_KEYDOWN when wParam == Native.VK_ESCAPE:
-                Close();
+            case Native.WM_KEYDOWN when HandleKey((int)wParam, Native.IsKeyRepeat(lParam)):
                 return 0;
 
             case Native.WM_CAPTURECHANGED:
@@ -199,44 +258,27 @@ internal sealed class AdvancedMenu
 
         if (y < headerH) return -1;
         int row = (y - headerH) / rowH;
-        return row is 0 or 1 ? row : -1;
+        return row < RowCount ? row : -1;
     }
 
-    private void PaintPopup(nint hwnd)
+    private void PaintPopup(nint hwnd) => Gdi.PaintBuffered(hwnd, (memDc, client) =>
     {
-        nint hdc = Native.BeginPaint(hwnd, out var ps);
-        try
-        {
-            Native.GetClientRect(hwnd, out var client);
+        // A new bitmap starts out black, and the rounded rect leaves its corners
+        // untouched; give them the window background instead.
+        Gdi.Fill(memDc, client, _theme.BackgroundBrush);
+        Gdi.RoundRect(memDc, client, _theme.Scale(6), Theme.Card, Theme.CardBorder);
 
-            nint memDc = Native.CreateCompatibleDC(hdc);
-            nint bitmap = Native.CreateCompatibleBitmap(hdc, client.Width, client.Height);
-            nint oldBitmap = Native.SelectObject(memDc, bitmap);
+        int pad = _theme.Scale(12);
+        int headerH = _theme.Scale(24);
+        int rowH = _theme.Scale(28);
 
-            Gdi.RoundRect(memDc, client, _theme.Scale(6), Theme.Card, Theme.CardBorder);
+        var headerRect = Native.RECT.Xywh(pad, _theme.Scale(4), client.Width - 2 * pad, headerH);
+        Gdi.Text(memDc, "OPTIONAL MODS", headerRect, _theme.FontLabel, Theme.TextMuted,
+            Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE);
 
-            int pad = _theme.Scale(12);
-            int headerH = _theme.Scale(24);
-            int rowH = _theme.Scale(28);
-
-            var headerRect = Native.RECT.Xywh(pad, _theme.Scale(4), client.Width - 2 * pad, headerH);
-            Gdi.Text(memDc, "OPTIONAL MODS", headerRect, _theme.FontLabel, Theme.TextMuted,
-                Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE);
-
-            DrawRow(memDc, client, 0, headerH, rowH, pad, "Xaero's Minimap", IncludeXaeroMinimap);
-            DrawRow(memDc, client, 1, headerH + rowH, rowH, pad, "Xaero's World Map", IncludeXaeroWorldMap);
-
-            Native.BitBlt(hdc, 0, 0, client.Width, client.Height, memDc, 0, 0, Native.SRCCOPY);
-
-            Native.SelectObject(memDc, oldBitmap);
-            Native.DeleteObject(bitmap);
-            Native.DeleteDC(memDc);
-        }
-        finally
-        {
-            Native.EndPaint(hwnd, ref ps);
-        }
-    }
+        DrawRow(memDc, client, 0, headerH, rowH, pad, "Xaero's Minimap", IncludeXaeroMinimap);
+        DrawRow(memDc, client, 1, headerH + rowH, rowH, pad, "Xaero's World Map", IncludeXaeroWorldMap);
+    });
 
     private void DrawRow(nint dc, Native.RECT client, int rowIndex, int top, int rowH, int pad, string label, bool isChecked)
     {

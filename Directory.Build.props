@@ -1,15 +1,29 @@
 <Project>
-  <!-- Dynamically resolve version from Git tags across all projects if not specified -->
+  <!--
+    Resolve the version from the newest Git tag unless one was passed in (CI does).
+    The tag is used only if `git describe` succeeded and the tag looks like a version
+    (v1.2.0, v1.3.0-beta.1); otherwise the SDK default stays. Without that check a
+    source tree with no .git (a ZIP download) or no tags (a shallow clone) fed git's
+    error message into $(Version) and broke the build with CS7034.
+  -->
   <Target Name="ResolveVersionFromGit" BeforeTargets="BeforeBuild;GetAssemblyVersion;GenerateAssemblyInfo" Condition="'$(Version)' == '' Or '$(Version)' == '1.0.0'">
-    <Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" StandardOutputImportance="low" IgnoreExitCode="true">
+    <Exec Command="git describe --tags --abbrev=0" ConsoleToMSBuild="true" StandardOutputImportance="low" StandardErrorImportance="low" IgnoreExitCode="true" IgnoreStandardErrorWarningFormat="true" EchoOff="true" ContinueOnError="true">
       <Output TaskParameter="ConsoleOutput" PropertyName="RawGitTag" />
+      <Output TaskParameter="ExitCode" PropertyName="GitDescribeExitCode" />
     </Exec>
-    <PropertyGroup Condition="'$(RawGitTag)' != ''">
-      <ParsedGitVersion>$([System.Text.RegularExpressions.Regex]::Replace($(RawGitTag.Trim()), '^v', ''))</ParsedGitVersion>
-      <Version Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</Version>
-      <AssemblyVersion Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</AssemblyVersion>
-      <FileVersion Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</FileVersion>
-      <InformationalVersion Condition="'$(ParsedGitVersion)' != ''">$(ParsedGitVersion)</InformationalVersion>
+    <PropertyGroup>
+      <GitTag Condition="'$(GitDescribeExitCode)' == '0'">$(RawGitTag.Trim())</GitTag>
+      <GitTagIsVersion>false</GitTagIsVersion>
+      <GitTagIsVersion Condition="'$(GitTag)' != ''">$([System.Text.RegularExpressions.Regex]::IsMatch('$(GitTag)', '^v?\d+\.\d+\.\d+(-[0-9A-Za-z][0-9A-Za-z.-]*)?$'))</GitTagIsVersion>
+    </PropertyGroup>
+    <PropertyGroup Condition="'$(GitTagIsVersion)' == 'True'">
+      <!-- v1.3.0-beta.1: Version 1.3.0-beta.1, AssemblyVersion/FileVersion 1.3.0 (numeric only). -->
+      <ParsedGitVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(GitTag)', '^v', ''))</ParsedGitVersion>
+      <ParsedGitNumericVersion>$([System.Text.RegularExpressions.Regex]::Replace('$(ParsedGitVersion)', '-.*$', ''))</ParsedGitNumericVersion>
+      <Version>$(ParsedGitVersion)</Version>
+      <AssemblyVersion>$(ParsedGitNumericVersion)</AssemblyVersion>
+      <FileVersion>$(ParsedGitNumericVersion)</FileVersion>
+      <InformationalVersion>$(ParsedGitVersion)</InformationalVersion>
     </PropertyGroup>
   </Target>
 </Project>

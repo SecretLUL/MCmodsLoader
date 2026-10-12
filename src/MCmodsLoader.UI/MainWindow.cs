@@ -92,8 +92,9 @@ internal sealed partial class MainWindow
         Native.ShowWindow(_hwnd, Native.SW_SHOW);
         Native.UpdateWindow(_hwnd);
 
+        _sync.UnhandledException = ReportError;
         _sync.Attach(_hwnd);
-        _sync.Post(_ => _ = OnLoadedAsync(), null);
+        _sync.Post(_ => Fire(OnLoadedAsync), null);
 
         int exitCode = RunMessageLoop();
         _theme.Dispose();
@@ -167,14 +168,20 @@ internal sealed partial class MainWindow
             if (result == 0) return (int)msg.WParam;
             if (result == -1) return 1;
 
-            // While the version list is open it owns the keyboard: IsDialogMessage would
+            bool isKeyDown = msg.Message == Native.WM_KEYDOWN;
+
+            // The Advanced menu is shown without activation and never has the focus, so
+            // its keys would go to whichever button has it; hand them over first.
+            if (isKeyDown && HandleAdvancedMenuKey((int)msg.WParam, msg.LParam)) continue;
+
+            // While a popup is open it owns the keyboard: IsDialogMessage would
             // otherwise swallow Enter as "press the default button" and Escape as cancel,
             // so neither would ever reach the picker.
-            bool pickerWantsKeys = (_picker.IsOpen || _advancedMenu.IsOpen) && msg.Message == Native.WM_KEYDOWN;
+            bool popupWantsKeys = (_picker.IsOpen || _advancedMenu.IsOpen) && isKeyDown;
 
             // Otherwise IsDialogMessage gives Tab/Shift-Tab navigation and
             // Enter-on-focused-button for free.
-            if (pickerWantsKeys || !Native.IsDialogMessageW(_hwnd, ref msg))
+            if (popupWantsKeys || !Native.IsDialogMessageW(_hwnd, ref msg))
             {
                 Native.TranslateMessage(ref msg);
                 Native.DispatchMessageW(ref msg);
@@ -182,10 +189,35 @@ internal sealed partial class MainWindow
         }
     }
 
+    /// <summary>Runs outside the window procedure, so a toggle that throws is caught here.</summary>
+    private bool HandleAdvancedMenuKey(int virtualKey, nint lParam)
+    {
+        try
+        {
+            return _advancedMenu.HandleKey(virtualKey, Native.IsKeyRepeat(lParam));
+        }
+        catch (Exception ex)
+        {
+            ReportError(ex);
+            return true;
+        }
+    }
+
     private static nint StaticWndProc(nint hwnd, uint msg, nint wParam, nint lParam)
-        => _instance is { } window
-            ? window.WndProc(hwnd, msg, wParam, lParam)
-            : Native.DefWindowProcW(hwnd, msg, wParam, lParam);
+    {
+        if (_instance is not { } window) return Native.DefWindowProcW(hwnd, msg, wParam, lParam);
+
+        try
+        {
+            return window.WndProc(hwnd, msg, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            // An exception escaping into user32 ends a NativeAOT process on the spot.
+            window.ReportWndProcError(msg, ex);
+            return 0;
+        }
+    }
 
     private nint WndProc(nint hwnd, uint msg, nint wParam, nint lParam)
     {
