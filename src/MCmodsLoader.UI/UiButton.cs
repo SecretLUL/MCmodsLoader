@@ -33,6 +33,7 @@ internal sealed class UiButton
     public ButtonKind Kind { get; }
     public string Text { get; private set; }
     public bool IsHot { get; private set; }
+    public bool IsEnabled { get; private set; } = true;
 
     /// <summary>Set for the drop-down field so arrow keys reach it instead of moving focus.</summary>
     public bool WantsArrowKeys { get; init; }
@@ -67,6 +68,7 @@ internal sealed class UiButton
 
     public void SetEnabled(bool enabled)
     {
+        IsEnabled = enabled;
         Native.EnableWindow(Hwnd, enabled);
         Invalidate();
     }
@@ -81,6 +83,20 @@ internal sealed class UiButton
     public void Invalidate() => Native.InvalidateRect(Hwnd, 0, true);
 
     private static nint OnHoverMessage(nint hwnd, uint msg, nint wParam, nint lParam, nuint id, nuint refData)
+    {
+        try
+        {
+            return HandleSubclassMessage(hwnd, msg, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            // An exception escaping into comctl32 ends a NativeAOT process on the spot.
+            MainWindow.ReportCallbackError(msg, ex);
+            return 0;
+        }
+    }
+
+    private static nint HandleSubclassMessage(nint hwnd, uint msg, nint wParam, nint lParam)
     {
         if (ByHandle.TryGetValue(hwnd, out var button))
         {
@@ -244,8 +260,10 @@ internal sealed class UiButton
 
         if (focused && !disabled)
         {
-            Gdi.RoundRect(item.Hdc, item.RcItem.Inflate(-theme.Scale(1), -theme.Scale(1)),
-                radius, 0, Theme.CardBorder);
+            // Outline only: the ghost has no fill of its own to repeat, and a fill of 0
+            // would be COLORREF black, not "none".
+            Gdi.RoundRectOutline(item.Hdc, item.RcItem.Inflate(-theme.Scale(1), -theme.Scale(1)),
+                radius, Theme.CardBorder);
         }
 
         uint textColor = disabled

@@ -1,4 +1,6 @@
 using System.Diagnostics;
+using System.Globalization;
+using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using MCmodsLoader.Core.Models;
@@ -9,13 +11,28 @@ namespace MCmodsLoader.Core.Services;
 public interface IFabricService
 {
     Task<FabricStatus> CheckFabricStatusAsync(string minecraftPath, string mcVersion);
-    Task<bool> InstallFabricAsync(string minecraftPath, string mcVersion, IProgress<string>? progress = null);
+    Task<bool> InstallFabricAsync(string minecraftPath, string mcVersion, IProgress<string>? progress = null, CancellationToken ct = default);
+
+    /// <summary>
+    /// Registers a launcher profile for the newest installed loader if Fabric is
+    /// installed but no profile points at it, then returns the fresh status. Never
+    /// throws; on failure the status as found is returned.
+    /// </summary>
+    Task<FabricStatus> EnsureLauncherProfileAsync(string minecraftPath, string mcVersion, CancellationToken ct = default);
 }
 
 public class FabricService : IFabricService
 {
     private readonly HttpClient _httpClient;
     private const string FabricIconBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAIAAAACABAMAAAAxEHz4AAAAGFBMVEUAAAA4NCrb0LTGvKW8spyAem2uppSakn5SsnMLAAAAAXRSTlMAQObYZgAAAJ5JREFUaIHt1MENgCAMRmFWYAVXcAVXcAVXcH3bhCYNkYjcKO8dSf7v1JASUWdZAlgb0PEmDSMAYYBdGkYApgf8ER3SbwRgesAf0BACMD1gB6S9IbkEEBfwY49oNj4lgLhA64C0o9R9RABTAvp4SX5kB2TA5y8EEAK4pRrxB9QcA4QBWkj3GCAMUCO/xwBhAI/kEsCagCHDY4AwAC3VA6t4zTAMj0OJAAAAAElFTkSuQmCC";
+    private const string FabricLoaderPrefix = "fabric-loader-";
+
+    // The caller's client may carry a long timeout meant for downloads.
+    private static readonly TimeSpan MetadataTimeout = TimeSpan.FromSeconds(20);
+    private static readonly TimeSpan InstallerDownloadTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan InstallerRunTimeout = TimeSpan.FromMinutes(3);
+
+    private static readonly JsonDocumentOptions LenientJson = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
     public FabricService(HttpClient? httpClient = null)
     {
@@ -34,72 +51,83 @@ public class FabricService : IFabricService
     public Task<FabricStatus> CheckFabricStatusAsync(string minecraftPath, string mcVersion)
     {
         string? installedLoaderVersion = null;
-        string? profileName = null;
+        var installedVersionIds = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
 
-        // 1. Check versions directory
+        // 1. Check versions directory. Only a folder carrying its version json counts:
+        // the launcher cannot start a version without it, and a folder emptied by an
+        // uninstall would otherwise keep reporting Fabric as installed.
         string versionsDir = Path.Combine(minecraftPath, "versions");
         if (Directory.Exists(versionsDir))
         {
-            string suffix = $"-{mcVersion}";
             foreach (var dir in Directory.GetDirectories(versionsDir))
             {
                 string dirName = Path.GetFileName(dir);
-                // Look for fabric-loader-<loaderVersion>-<mcVersion>
-                if (dirName.StartsWith("fabric-loader-", StringComparison.OrdinalIgnoreCase) &&
-                    dirName.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
-                    dirName.Length >= "fabric-loader-".Length + suffix.Length + 1)
+                string? extracted = ExtractLoaderVersion(dirName, mcVersion);
+                if (extracted == null || !File.Exists(Path.Combine(dir, $"{dirName}.json")))
+                    continue;
+
+                installedVersionIds.Add(dirName);
+                if (installedLoaderVersion == null || MinecraftVersionComparer.Instance.Compare(extracted, installedLoaderVersion) > 0)
                 {
-                    string extracted = dirName.Substring("fabric-loader-".Length, dirName.Length - "fabric-loader-".Length - suffix.Length);
-                    if (!string.IsNullOrWhiteSpace(extracted))
-                    {
-                        if (installedLoaderVersion == null || MinecraftVersionComparer.Instance.Compare(extracted, installedLoaderVersion) > 0)
-                        {
-                            installedLoaderVersion = extracted;
-                        }
-                    }
+                    installedLoaderVersion = extracted;
                 }
             }
         }
 
-        // 2. Check launcher_profiles.json
-        string profilesFile = Path.Combine(minecraftPath, "launcher_profiles.json");
-        if (File.Exists(profilesFile))
+        if (installedLoaderVersion == null)
         {
+            // A launcher profile alone is not an installation: its version folder is gone.
+            return Task.FromResult(new FabricStatus { IsInstalled = false });
+        }
+
+        // 2. Find the launcher profile to report. Several Fabric profiles can point at
+        // the same game version; prefer the one on the newest installed loader, then
+        // one on any installed loader, then the most recently used. A profile on a
+        // loader that is not installed cannot be launched and does not count.
+        string newestVersionId = $"{FabricLoaderPrefix}{installedLoaderVersion}-{mcVersion}";
+        string? profileName = null;
+        int bestRank = -1;
+        DateTimeOffset bestLastUsed = DateTimeOffset.MinValue;
+
+        foreach (string fileName in new[] { "launcher_profiles.json", "launcher_profiles_microsoft_store.json" })
+        {
+            string profilesFile = Path.Combine(minecraftPath, fileName);
+            if (!File.Exists(profilesFile))
+                continue;
+
             try
             {
-                var docOptions = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
                 using var stream = File.OpenRead(profilesFile);
-                using var doc = JsonDocument.Parse(stream, docOptions);
-                if (doc.RootElement.TryGetProperty("profiles", out var profiles))
-                {
-                    string suffix = $"-{mcVersion}";
-                    foreach (var p in profiles.EnumerateObject())
-                    {
-                        if (p.Value.TryGetProperty("lastVersionId", out var lastVer))
-                        {
-                            string ver = lastVer.GetString() ?? "";
-                            if (ver.StartsWith("fabric-loader-", StringComparison.OrdinalIgnoreCase) &&
-                                ver.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) &&
-                                ver.Length >= "fabric-loader-".Length + suffix.Length + 1)
-                            {
-                                if (p.Value.TryGetProperty("name", out var nameProp) && !string.IsNullOrWhiteSpace(nameProp.GetString()))
-                                {
-                                    profileName = nameProp.GetString();
-                                }
-                                else
-                                {
-                                    profileName = p.Name;
-                                }
+                using var doc = JsonDocument.Parse(stream, LenientJson);
+                if (!doc.RootElement.TryGetProperty("profiles", out var profiles) || profiles.ValueKind != JsonValueKind.Object)
+                    continue;
 
-                                if (installedLoaderVersion == null)
-                                {
-                                    string extracted = ver.Substring("fabric-loader-".Length, ver.Length - "fabric-loader-".Length - suffix.Length);
-                                    if (!string.IsNullOrWhiteSpace(extracted))
-                                        installedLoaderVersion = extracted;
-                                }
-                                break;
-                            }
-                        }
+                foreach (var p in profiles.EnumerateObject())
+                {
+                    if (p.Value.ValueKind != JsonValueKind.Object ||
+                        !p.Value.TryGetProperty("lastVersionId", out var lastVer) ||
+                        lastVer.ValueKind != JsonValueKind.String)
+                        continue;
+
+                    string ver = lastVer.GetString() ?? "";
+                    if (ExtractLoaderVersion(ver, mcVersion) == null)
+                        continue;
+
+                    if (!installedVersionIds.Contains(ver))
+                        continue;
+
+                    int rank = ver.Equals(newestVersionId, StringComparison.OrdinalIgnoreCase) ? 2 : 1;
+                    DateTimeOffset lastUsed = ReadTimestamp(p.Value, "lastUsed");
+
+                    if (rank > bestRank || (rank == bestRank && lastUsed > bestLastUsed))
+                    {
+                        bestRank = rank;
+                        bestLastUsed = lastUsed;
+                        profileName = p.Value.TryGetProperty("name", out var nameProp) &&
+                                      nameProp.ValueKind == JsonValueKind.String &&
+                                      !string.IsNullOrWhiteSpace(nameProp.GetString())
+                            ? nameProp.GetString()
+                            : p.Name;
                     }
                 }
             }
@@ -109,41 +137,116 @@ public class FabricService : IFabricService
             }
         }
 
-        bool isInstalled = !string.IsNullOrEmpty(installedLoaderVersion);
-
         return Task.FromResult(new FabricStatus
         {
-            IsInstalled = isInstalled,
+            IsInstalled = true,
             InstalledLoaderVersion = installedLoaderVersion,
-            ProfileName = profileName ?? (isInstalled ? $"fabric-loader-{mcVersion}" : null),
+            InstalledVersionId = newestVersionId,
+            HasLauncherProfile = profileName != null,
+            ProfileName = profileName,
         });
     }
 
-    private async Task<string?> GetLatestLoaderVersionAsync(string mcVersion)
+    public Task<FabricStatus> EnsureLauncherProfileAsync(string minecraftPath, string mcVersion, CancellationToken ct = default)
+    {
+        // Off the caller's thread: both steps are file IO. The token is checked rather
+        // than handed to Task.Run, which would throw instead of returning a status.
+        return Task.Run(async () =>
+        {
+            FabricStatus status;
+            try
+            {
+                status = await CheckFabricStatusAsync(minecraftPath, mcVersion);
+            }
+            catch
+            {
+                return new FabricStatus();
+            }
+
+            if (!status.IsInstalled || status.HasLauncherProfile || status.InstalledVersionId == null || ct.IsCancellationRequested)
+                return status;
+
+            try
+            {
+                RegisterProfileInLauncher(minecraftPath, mcVersion, status.InstalledVersionId);
+                return await CheckFabricStatusAsync(minecraftPath, mcVersion);
+            }
+            catch
+            {
+                return status;
+            }
+        });
+    }
+
+    /// <summary>
+    /// Extracts the loader build from a "fabric-loader-&lt;loader&gt;-&lt;mcVersion&gt;" version id,
+    /// or null if the id is not a Fabric version for that game version.
+    /// </summary>
+    private static string? ExtractLoaderVersion(string versionId, string mcVersion)
+    {
+        string suffix = $"-{mcVersion}";
+        if (!versionId.StartsWith(FabricLoaderPrefix, StringComparison.OrdinalIgnoreCase) ||
+            !versionId.EndsWith(suffix, StringComparison.OrdinalIgnoreCase) ||
+            versionId.Length < FabricLoaderPrefix.Length + suffix.Length + 1)
+            return null;
+
+        string extracted = versionId.Substring(FabricLoaderPrefix.Length, versionId.Length - FabricLoaderPrefix.Length - suffix.Length);
+        return string.IsNullOrWhiteSpace(extracted) ? null : extracted;
+    }
+
+    private static DateTimeOffset ReadTimestamp(JsonElement obj, string property) =>
+        obj.TryGetProperty(property, out var value) && value.ValueKind == JsonValueKind.String
+            ? ParseTimestamp(value.GetString())
+            : DateTimeOffset.MinValue;
+
+    private static DateTimeOffset ReadTimestamp(JsonObject obj, string property) =>
+        obj[property] is JsonValue value && value.TryGetValue<string>(out string? text)
+            ? ParseTimestamp(text)
+            : DateTimeOffset.MinValue;
+
+    private static DateTimeOffset ParseTimestamp(string? text) =>
+        DateTimeOffset.TryParse(text, CultureInfo.InvariantCulture, DateTimeStyles.AssumeUniversal, out var parsed)
+            ? parsed
+            : DateTimeOffset.MinValue;
+
+    /// <summary>
+    /// The newest stable loader build for a game version, or the newest build at all
+    /// when none is marked stable. Meta lists the builds newest first.
+    /// </summary>
+    internal async Task<string?> GetLatestLoaderVersionAsync(string mcVersion, CancellationToken ct = default)
     {
         try
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(MetadataTimeout);
+
             string url = $"https://meta.fabricmc.net/v2/versions/loader/{Uri.EscapeDataString(mcVersion)}";
-            var response = await _httpClient.GetAsync(url);
+            using var response = await _httpClient.GetAsync(url, cts.Token);
             if (!response.IsSuccessStatusCode)
                 return null;
 
-            using var stream = await response.Content.ReadAsStreamAsync();
-            using var doc = await JsonDocument.ParseAsync(stream);
+            using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+            using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cts.Token);
 
+            string? firstVersion = null;
             foreach (var item in doc.RootElement.EnumerateArray())
             {
-                if (item.TryGetProperty("loader", out var loader))
-                {
-                    string? version = loader.GetProperty("version").GetString();
-                    bool stable = loader.TryGetProperty("stable", out var st) && st.GetBoolean();
-                    if (!string.IsNullOrEmpty(version))
-                    {
-                        // Return the first one (most recent) or prefer stable
-                        return version;
-                    }
-                }
+                if (!item.TryGetProperty("loader", out var loader) ||
+                    !loader.TryGetProperty("version", out var ver) ||
+                    ver.ValueKind != JsonValueKind.String)
+                    continue;
+
+                string? version = ver.GetString();
+                if (string.IsNullOrEmpty(version))
+                    continue;
+
+                if (loader.TryGetProperty("stable", out var st) && st.ValueKind == JsonValueKind.True)
+                    return version;
+
+                firstVersion ??= version;
             }
+
+            return firstVersion;
         }
         catch
         {
@@ -153,10 +256,10 @@ public class FabricService : IFabricService
         return null;
     }
 
-    public async Task<bool> InstallFabricAsync(string minecraftPath, string mcVersion, IProgress<string>? progress = null)
+    public async Task<bool> InstallFabricAsync(string minecraftPath, string mcVersion, IProgress<string>? progress = null, CancellationToken ct = default)
     {
         progress?.Report($"Checking latest Fabric version for Minecraft {mcVersion}...");
-        string? loaderVersion = await GetLatestLoaderVersionAsync(mcVersion);
+        string? loaderVersion = await GetLatestLoaderVersionAsync(mcVersion, ct);
         if (string.IsNullOrEmpty(loaderVersion))
         {
             progress?.Report($"Could not find a compatible Fabric version for Minecraft {mcVersion}.");
@@ -170,12 +273,14 @@ public class FabricService : IFabricService
         if (!string.IsNullOrEmpty(javaPath))
         {
             progress?.Report($"Java found ({javaPath}). Using official Fabric Installer...");
-            bool cliSuccess = await InstallViaCliAsync(javaPath, minecraftPath, mcVersion, loaderVersion, progress);
+            bool cliSuccess = await InstallViaCliAsync(javaPath, minecraftPath, mcVersion, loaderVersion, progress, ct);
             if (cliSuccess)
             {
                 progress?.Report("Fabric installed successfully via official installer!");
                 return true;
             }
+            if (ct.IsCancellationRequested)
+                return false;
             progress?.Report("CLI installer was unsuccessful. Switching to direct profile installation...");
         }
         else
@@ -184,7 +289,7 @@ public class FabricService : IFabricService
         }
 
         // Strategy 2: Direct installation via Fabric Meta profile JSON
-        bool directSuccess = await InstallDirectAsync(minecraftPath, mcVersion, loaderVersion, progress);
+        bool directSuccess = await InstallDirectAsync(minecraftPath, mcVersion, loaderVersion, progress, ct);
         if (directSuccess)
         {
             progress?.Report("Fabric installed successfully!");
@@ -195,63 +300,72 @@ public class FabricService : IFabricService
         return false;
     }
 
-    private string? FindJavaExecutable(string minecraftPath)
+    private static readonly string[] KnownRuntimeComponents =
     {
-        // 1. Check system PATH
-        try
-        {
-            using var proc = Process.Start(new ProcessStartInfo
-            {
-                FileName = "java",
-                Arguments = "-version",
-                RedirectStandardError = true,
-                RedirectStandardOutput = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            });
-            if (proc != null)
-            {
-                proc.WaitForExit(3000);
-                return "java";
-            }
-        }
-        catch
-        {
-            // Not in PATH
-        }
+        "java-runtime-delta", "java-runtime-gamma", "java-runtime-beta", "java-runtime-alpha", "jre-legacy"
+    };
 
-        // 2. Check JAVA_HOME
-        string? javaHome = Environment.GetEnvironmentVariable("JAVA_HOME");
-        if (!string.IsNullOrEmpty(javaHome))
+    private static readonly string[] RuntimePlatforms = { "windows-x64", "windows" };
+
+    internal static string? FindJavaExecutable(string minecraftPath) =>
+        FindJavaExecutable(
+            Environment.GetEnvironmentVariable("JAVA_HOME"),
+            Environment.GetEnvironmentVariable("PATH"),
+            GetMinecraftRuntimeRoots(minecraftPath));
+
+    /// <summary>
+    /// Resolves java.exe to a full path. Starting a bare "java" would let CreateProcess
+    /// search the application directory and the working directory first, typically
+    /// Downloads, where any planted java.exe would run. Relative PATH entries are skipped
+    /// for the same reason.
+    /// </summary>
+    internal static string? FindJavaExecutable(string? javaHome, string? pathVariable, IEnumerable<string> runtimeRoots)
+    {
+        // 1. JAVA_HOME
+        if (TryFullPath(javaHome, out string? home))
         {
-            string javaExe = Path.Combine(javaHome, "bin", "java.exe");
+            string javaExe = Path.Combine(home, "bin", "java.exe");
             if (File.Exists(javaExe))
                 return javaExe;
         }
 
-        // 3. Check Minecraft bundled runtime
-        string runtimeBase = Path.Combine(minecraftPath, "runtime");
-        if (Directory.Exists(runtimeBase))
+        // 2. Absolute PATH entries
+        if (!string.IsNullOrEmpty(pathVariable))
         {
-            string[] searchPaths =
+            foreach (string entry in pathVariable.Split(Path.PathSeparator, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
             {
-                Path.Combine(runtimeBase, "java-runtime-gamma", "windows", "java-runtime-gamma", "bin", "java.exe"),
-                Path.Combine(runtimeBase, "java-runtime-alpha", "windows", "java-runtime-alpha", "bin", "java.exe"),
-                Path.Combine(runtimeBase, "java-runtime-beta", "windows", "java-runtime-beta", "bin", "java.exe"),
-                Path.Combine(runtimeBase, "java-runtime-delta", "windows", "java-runtime-delta", "bin", "java.exe")
-            };
+                if (!TryFullPath(Environment.ExpandEnvironmentVariables(entry.Trim('"')), out string? dir))
+                    continue;
 
-            foreach (var sp in searchPaths)
+                string javaExe = Path.Combine(dir, "java.exe");
+                if (File.Exists(javaExe))
+                    return javaExe;
+            }
+        }
+
+        // 3. Runtimes bundled with the Minecraft launcher
+        foreach (string root in runtimeRoots)
+        {
+            if (!TryFullPath(root, out string? runtimeBase) || !Directory.Exists(runtimeBase))
+                continue;
+
+            foreach (string component in KnownRuntimeComponents)
             {
-                if (File.Exists(sp))
-                    return sp;
+                foreach (string platform in RuntimePlatforms)
+                {
+                    string javaExe = Path.Combine(runtimeBase, component, platform, component, "bin", "java.exe");
+                    if (File.Exists(javaExe))
+                        return javaExe;
+                }
             }
 
             try
             {
-                var files = Directory.GetFiles(runtimeBase, "java.exe", SearchOption.AllDirectories);
-                if (files.Length > 0)
-                    return files[0];
+                var options = new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true };
+                string? found = Directory.EnumerateFiles(runtimeBase, "java.exe", options)
+                    .FirstOrDefault(f => string.Equals(Path.GetFileName(Path.GetDirectoryName(f)), "bin", StringComparison.OrdinalIgnoreCase));
+                if (found != null)
+                    return found;
             }
             catch
             {
@@ -262,40 +376,98 @@ public class FabricService : IFabricService
         return null;
     }
 
-    private async Task<bool> InstallViaCliAsync(string javaPath, string minecraftPath, string mcVersion, string loaderVersion, IProgress<string>? progress)
+    /// <summary>
+    /// Where the launcher keeps its Java runtimes: inside .minecraft, in the Microsoft
+    /// Store launcher's package cache, and next to the legacy standalone launcher.
+    /// </summary>
+    internal static IEnumerable<string> GetMinecraftRuntimeRoots(string minecraftPath)
+    {
+        if (!string.IsNullOrWhiteSpace(minecraftPath))
+            yield return Path.Combine(minecraftPath, "runtime");
+
+        string localAppData = Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData);
+        if (!string.IsNullOrEmpty(localAppData))
+            yield return Path.Combine(localAppData, "Packages", "Microsoft.4297127D64EC6_8wekyb3d8bbwe", "LocalCache", "Local", "runtime");
+
+        string programFilesX86 = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86);
+        if (!string.IsNullOrEmpty(programFilesX86))
+            yield return Path.Combine(programFilesX86, "Minecraft Launcher", "runtime");
+    }
+
+    private static bool TryFullPath(string? path, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? fullPath)
+    {
+        fullPath = null;
+        if (string.IsNullOrWhiteSpace(path) || !Path.IsPathFullyQualified(path))
+            return false;
+
+        try
+        {
+            fullPath = Path.GetFullPath(path);
+            return true;
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private async Task<bool> InstallViaCliAsync(string javaPath, string minecraftPath, string mcVersion, string loaderVersion, IProgress<string>? progress, CancellationToken ct)
     {
         string tempJar = Path.Combine(Path.GetTempPath(), $"fabric-installer-{Guid.NewGuid():N}.jar");
 
         try
         {
             progress?.Report("Downloading Fabric Installer...");
-            string installerUrl = await GetInstallerJarUrlAsync();
-            var bytes = await _httpClient.GetByteArrayAsync(installerUrl);
-            await File.WriteAllBytesAsync(tempJar, bytes);
+            string installerUrl = await GetInstallerJarUrlAsync(ct);
+            using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+            {
+                cts.CancelAfter(InstallerDownloadTimeout);
+                using var response = await _httpClient.GetAsync(installerUrl, cts.Token);
+                response.EnsureSuccessStatusCode();
+                var bytes = await response.Content.ReadAsByteArrayAsync(cts.Token);
+                await File.WriteAllBytesAsync(tempJar, bytes, cts.Token);
+            }
 
             progress?.Report("Running Fabric Installer...");
-            var psi = new ProcessStartInfo
-            {
-                FileName = javaPath,
-                Arguments = $"-jar \"{tempJar}\" client -dir \"{minecraftPath}\" -mcversion {mcVersion} -loader {loaderVersion}",
-                RedirectStandardOutput = true,
-                RedirectStandardError = true,
-                UseShellExecute = false,
-                CreateNoWindow = true
-            };
+            var result = await ProcessRunner.RunAsync(
+                javaPath,
+                new[]
+                {
+                    // Piped output is otherwise written in the ANSI code page, which
+                    // garbles non-ASCII paths in the error tail. Java 8-18 read the sun.*
+                    // properties, 19+ the plain ones; unknown properties are ignored.
+                    "-Dsun.stdout.encoding=UTF-8", "-Dsun.stderr.encoding=UTF-8",
+                    "-Dstdout.encoding=UTF-8", "-Dstderr.encoding=UTF-8",
+                    "-jar", tempJar, "client", "-dir", minecraftPath, "-mcversion", mcVersion, "-loader", loaderVersion
+                },
+                InstallerRunTimeout,
+                Path.GetTempPath(),
+                ct,
+                Encoding.UTF8);
 
-            using var proc = Process.Start(psi);
-            if (proc == null)
+            string errorTail = ProcessRunner.Tail(string.IsNullOrWhiteSpace(result.StandardError) ? result.StandardOutput : result.StandardError);
+            if (result.TimedOut)
+            {
+                progress?.Report($"Fabric Installer did not finish within {InstallerRunTimeout.TotalMinutes:0} minutes and was stopped.{FormatTail(errorTail)}");
                 return false;
-
-            string stdout = await proc.StandardOutput.ReadToEndAsync();
-            string stderr = await proc.StandardError.ReadToEndAsync();
-            await proc.WaitForExitAsync();
-
-            if (proc.ExitCode == 0)
-            {
-                return true;
             }
+
+            if (result.ExitCode != 0)
+            {
+                progress?.Report($"Fabric Installer exited with code {result.ExitCode}.{FormatTail(errorTail)}");
+                return false;
+            }
+
+            // The installer can exit cleanly without having written the version (an
+            // unknown game version, for one), which the launcher could not start.
+            string versionId = $"{FabricLoaderPrefix}{loaderVersion}-{mcVersion}";
+            if (!File.Exists(Path.Combine(minecraftPath, "versions", versionId, $"{versionId}.json")))
+            {
+                progress?.Report($"Fabric Installer finished but did not create {versionId}.{FormatTail(errorTail)}");
+                return false;
+            }
+
+            return true;
         }
         catch (Exception ex)
         {
@@ -317,20 +489,26 @@ public class FabricService : IFabricService
         return false;
     }
 
-    private async Task<string> GetInstallerJarUrlAsync()
+    private static string FormatTail(string tail) => string.IsNullOrWhiteSpace(tail) ? "" : $" Output: {tail}";
+
+    private async Task<string> GetInstallerJarUrlAsync(CancellationToken ct)
     {
         try
         {
-            var response = await _httpClient.GetAsync("https://meta.fabricmc.net/v2/versions/installer");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(MetadataTimeout);
+
+            using var response = await _httpClient.GetAsync("https://meta.fabricmc.net/v2/versions/installer", cts.Token);
             if (response.IsSuccessStatusCode)
             {
-                using var stream = await response.Content.ReadAsStreamAsync();
-                using var doc = await JsonDocument.ParseAsync(stream);
+                using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cts.Token);
                 foreach (var el in doc.RootElement.EnumerateArray())
                 {
-                    if (el.TryGetProperty("stable", out var st) && st.GetBoolean())
+                    if (el.TryGetProperty("stable", out var st) && st.ValueKind == JsonValueKind.True &&
+                        el.TryGetProperty("url", out var url) && url.ValueKind == JsonValueKind.String)
                     {
-                        return el.GetProperty("url").GetString()!;
+                        return url.GetString()!;
                     }
                 }
             }
@@ -343,27 +521,30 @@ public class FabricService : IFabricService
         return "https://maven.fabricmc.net/net/fabricmc/fabric-installer/1.1.2/fabric-installer-1.1.2.jar";
     }
 
-    public async Task<bool> InstallDirectAsync(string minecraftPath, string mcVersion, string loaderVersion, IProgress<string>? progress)
+    public async Task<bool> InstallDirectAsync(string minecraftPath, string mcVersion, string loaderVersion, IProgress<string>? progress, CancellationToken ct = default)
     {
         try
         {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(MetadataTimeout);
+
             progress?.Report("Downloading Fabric profile JSON...");
             string profileUrl = $"https://meta.fabricmc.net/v2/versions/loader/{Uri.EscapeDataString(mcVersion)}/{Uri.EscapeDataString(loaderVersion)}/profile/json";
-            var response = await _httpClient.GetAsync(profileUrl);
+            using var response = await _httpClient.GetAsync(profileUrl, cts.Token);
             if (!response.IsSuccessStatusCode)
             {
                 progress?.Report($"Failed to download profile JSON (HTTP {response.StatusCode})");
                 return false;
             }
 
-            string profileJsonContent = await response.Content.ReadAsStringAsync();
+            string profileJsonContent = await response.Content.ReadAsStringAsync(cts.Token);
 
             string versionId = $"fabric-loader-{loaderVersion}-{mcVersion}";
             string versionDir = Path.Combine(minecraftPath, "versions", versionId);
             Directory.CreateDirectory(versionDir);
 
             string targetJsonPath = Path.Combine(versionDir, $"{versionId}.json");
-            await File.WriteAllTextAsync(targetJsonPath, profileJsonContent);
+            AtomicFile.WriteAllText(targetJsonPath, profileJsonContent);
 
             progress?.Report("Updating Minecraft Launcher profiles...");
             RegisterProfileInLauncher(minecraftPath, mcVersion, versionId);
@@ -387,18 +568,12 @@ public class FabricService : IFabricService
         {
             try
             {
-                string dir = Path.GetDirectoryName(defaultProfilesFile) ?? "";
-                if (!string.IsNullOrEmpty(dir) && !Directory.Exists(dir))
-                {
-                    Directory.CreateDirectory(dir);
-                }
-
                 var initialObj = new JsonObject
                 {
                     ["profiles"] = new JsonObject(),
                     ["version"] = 3
                 };
-                File.WriteAllText(defaultProfilesFile, initialObj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
+                AtomicFile.WriteAllText(defaultProfilesFile, initialObj.ToJsonString(new JsonSerializerOptions { WriteIndented = true }));
             }
             catch
             {
@@ -418,8 +593,7 @@ public class FabricService : IFabricService
                 JsonObject? rootObj;
                 using (var stream = File.OpenRead(file))
                 {
-                    var docOptions = new JsonDocumentOptions { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
-                    rootObj = JsonNode.Parse(stream, documentOptions: docOptions) as JsonObject;
+                    rootObj = JsonNode.Parse(stream, documentOptions: LenientJson) as JsonObject;
                 }
 
                 if (rootObj is not null)
@@ -430,40 +604,48 @@ public class FabricService : IFabricService
                         rootObj["profiles"] = profilesObj;
                     }
 
-                    // Find if any existing profile is for this Minecraft version
-                    string suffix = $"-{mcVersion}";
+                    // Which profile to point at the new loader, in order: our own
+                    // "fabric-loader-<mc>" profile while it still runs Fabric (a user who
+                    // switched it to vanilla or Quilt keeps that choice), else the most
+                    // recently used Fabric profile for this game version, else a new one.
                     string newKey = $"fabric-loader-{mcVersion}";
-                    string? targetKey = null;
                     JsonObject? existingProfile = null;
+                    DateTimeOffset existingLastUsed = DateTimeOffset.MinValue;
+                    bool newKeyTaken = false;
 
                     foreach (var kvp in profilesObj)
                     {
-                        if (kvp.Value is JsonObject pObj)
-                        {
-                            string lastVer = string.Empty;
-                            if (pObj["lastVersionId"] is JsonValue val && val.TryGetValue<string>(out string? s) && s != null)
-                            {
-                                lastVer = s;
-                            }
+                        if (kvp.Value is not JsonObject pObj)
+                            continue;
 
-                            if (kvp.Key.Equals(newKey, StringComparison.OrdinalIgnoreCase) ||
-                                lastVer.Equals(versionId, StringComparison.OrdinalIgnoreCase) ||
-                                (lastVer.StartsWith("fabric-loader-", StringComparison.OrdinalIgnoreCase) && lastVer.EndsWith(suffix, StringComparison.OrdinalIgnoreCase)))
+                        string lastVer = pObj["lastVersionId"] is JsonValue val && val.TryGetValue<string>(out string? s) && s != null ? s : string.Empty;
+                        bool isOwnKey = kvp.Key.Equals(newKey, StringComparison.OrdinalIgnoreCase);
+                        newKeyTaken |= isOwnKey;
+
+                        if (isOwnKey && lastVer.StartsWith(FabricLoaderPrefix, StringComparison.OrdinalIgnoreCase))
+                        {
+                            existingProfile = pObj;
+                            break;
+                        }
+
+                        if (ExtractLoaderVersion(lastVer, mcVersion) != null)
+                        {
+                            DateTimeOffset lastUsed = ReadTimestamp(pObj, "lastUsed");
+                            if (existingProfile == null || lastUsed > existingLastUsed)
                             {
-                                targetKey = kvp.Key;
                                 existingProfile = pObj;
-                                break;
+                                existingLastUsed = lastUsed;
                             }
                         }
                     }
 
                     string nowIso = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
 
-                    if (existingProfile != null && targetKey != null)
+                    if (existingProfile != null)
                     {
-                        // Preserve existing profile's javaArgs, resolution, name, etc.
+                        // Preserve existing profile's javaArgs, resolution, name, etc. Only
+                        // the version changes; lastUsed stays the launcher's to set.
                         existingProfile["lastVersionId"] = versionId;
-                        existingProfile["lastUsed"] = nowIso;
                         if (!existingProfile.ContainsKey("icon") || existingProfile["icon"] == null)
                         {
                             existingProfile["icon"] = FabricIconBase64;
@@ -483,7 +665,14 @@ public class FabricService : IFabricService
                             ["javaArgs"] = "-Xmx4G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M"
                         };
 
-                        profilesObj[newKey] = newProfile;
+                        // Our key may now hold the user's non-Fabric profile; leave it be.
+                        string key = newKey;
+                        for (int n = 2; newKeyTaken && profilesObj.Any(kvp => kvp.Key.Equals(key, StringComparison.OrdinalIgnoreCase)); n++)
+                        {
+                            key = $"{newKey}-{n}";
+                        }
+
+                        profilesObj[key] = newProfile;
                     }
 
                     var options = new JsonSerializerOptions
@@ -491,7 +680,9 @@ public class FabricService : IFabricService
                         WriteIndented = true,
                         Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
                     };
-                    File.WriteAllText(file, rootObj.ToJsonString(options));
+
+                    // Atomic, so a crash mid-write cannot corrupt the user's profiles.
+                    AtomicFile.WriteAllText(file, rootObj.ToJsonString(options));
                 }
             }
             catch
@@ -499,5 +690,86 @@ public class FabricService : IFabricService
                 // Continue with other files if any error
             }
         }
+    }
+}
+
+internal sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError, bool TimedOut);
+
+/// <summary>
+/// Runs a child process to completion with both output pipes drained concurrently, so a
+/// child filling one pipe while the other is being read cannot deadlock, and with a
+/// timeout after which the whole process tree is killed.
+/// </summary>
+internal static class ProcessRunner
+{
+    public static async Task<ProcessResult> RunAsync(string fileName, IEnumerable<string> arguments, TimeSpan timeout, string? workingDirectory = null, CancellationToken ct = default, Encoding? outputEncoding = null)
+    {
+        var psi = new ProcessStartInfo
+        {
+            FileName = fileName,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            StandardOutputEncoding = outputEncoding,
+            StandardErrorEncoding = outputEncoding,
+            UseShellExecute = false,
+            CreateNoWindow = true
+        };
+        if (!string.IsNullOrEmpty(workingDirectory))
+            psi.WorkingDirectory = workingDirectory;
+
+        // ArgumentList quotes each argument correctly, including paths ending in '\'.
+        foreach (string arg in arguments)
+            psi.ArgumentList.Add(arg);
+
+        using var proc = new Process { StartInfo = psi };
+        proc.Start();
+
+        Task<string> stdoutTask = proc.StandardOutput.ReadToEndAsync();
+        Task<string> stderrTask = proc.StandardError.ReadToEndAsync();
+
+        bool timedOut = false;
+        using (var cts = CancellationTokenSource.CreateLinkedTokenSource(ct))
+        {
+            cts.CancelAfter(timeout);
+            try
+            {
+                await proc.WaitForExitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                timedOut = !ct.IsCancellationRequested;
+                try
+                {
+                    proc.Kill(entireProcessTree: true);
+                }
+                catch
+                {
+                    // Already gone
+                }
+            }
+        }
+
+        // Once the tree is dead the pipes close; the grace period only guards against a
+        // stray grandchild that escaped the kill and still holds a pipe handle.
+        var drained = Task.WhenAll(stdoutTask, stderrTask);
+        await Task.WhenAny(drained, Task.Delay(TimeSpan.FromSeconds(5), CancellationToken.None));
+
+        string stdout = stdoutTask.IsCompletedSuccessfully ? stdoutTask.Result : "";
+        string stderr = stderrTask.IsCompletedSuccessfully ? stderrTask.Result : "";
+        int exitCode = proc.HasExited ? proc.ExitCode : -1;
+
+        ct.ThrowIfCancellationRequested();
+        return new ProcessResult(timedOut ? -1 : exitCode, stdout, stderr, timedOut);
+    }
+
+    /// <summary>The last few non-empty lines of an output stream, on a single line.</summary>
+    public static string Tail(string output, int maxLines = 3, int maxChars = 300)
+    {
+        if (string.IsNullOrWhiteSpace(output))
+            return "";
+
+        var lines = output.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        string tail = string.Join(" | ", lines.TakeLast(maxLines));
+        return tail.Length <= maxChars ? tail : "..." + tail[^maxChars..];
     }
 }

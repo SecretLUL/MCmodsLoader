@@ -166,6 +166,9 @@ public class UpdateServiceTests
     [InlineData("0.9.0", "1.0.0", false)]
     [InlineData("1.0.0", "1.1.0", false)]
     [InlineData("1.2.3.4", "1.2.3.0", true)]
+    [InlineData("1.3.0", "1.3.0-beta.1", true)]
+    [InlineData("1.3.0-beta.1", "1.3.0", false)]
+    [InlineData("1.3.0-beta.2", "1.3.0-beta.1", false)]
     public void IsNewerVersion_ComparesCorrectly(string latest, string current, bool expected)
     {
         bool result = UpdateService.IsNewerVersion(latest, current);
@@ -187,6 +190,7 @@ public class UpdateServiceTests
             ""assets"": [
                 {
                     ""name"": ""MCmodsLoader.exe"",
+                    ""digest"": ""sha256:1F8A9418C4DF839DE5AD2358D6E9EB23C15DDDF81AA92B137DDE54365D331B5C"",
                     ""browser_download_url"": ""https://github.com/SecretLUL/MCmodsLoader/releases/download/v99.0.0/MCmodsLoader.exe""
                 }
             ]
@@ -203,6 +207,7 @@ public class UpdateServiceTests
         Assert.Equal("99.0.0", update.LatestVersion);
         Assert.Equal("https://github.com/SecretLUL/MCmodsLoader/releases/download/v99.0.0/MCmodsLoader.exe", update.DownloadUrl);
         Assert.Equal("v99.0.0 - Bugfix Release", update.ReleaseName);
+        Assert.Equal("1f8a9418c4df839de5ad2358d6e9eb23c15dddf81aa92b137dde54365d331b5c", update.DownloadSha256);
     }
 
     [Fact]
@@ -228,47 +233,43 @@ public class UpdateServiceTests
         Assert.NotNull(update);
         Assert.False(update.HasUpdate);
         Assert.Equal("1.0.0", update.LatestVersion);
+        Assert.Null(update.DownloadSha256);
     }
 
     [Fact]
-    public async Task DownloadAndApplyUpdateAsync_DownloadsAndCreatesUpdaterScript()
+    public async Task ApplyUpdateAsync_DownloadsVerifiesAndSwapsInTheNewExecutable()
     {
         string tempDir = Path.Combine(Path.GetTempPath(), $"UpdateTest_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
         try
         {
             string fakeTargetExe = Path.Combine(tempDir, "MCmodsLoader.exe");
-            await File.WriteAllTextAsync(fakeTargetExe, "Original Content v1.0.0");
+            await File.WriteAllTextAsync(fakeTargetExe, "MZ Original Content v1.0.0");
 
-            byte[] newBytes = Encoding.UTF8.GetBytes("New Binary Content v2.0.0");
+            byte[] newBytes = Encoding.UTF8.GetBytes("MZ New Binary Content v2.0.0");
             var handler = new MockBinaryHttpHandler(newBytes);
             using var client = new HttpClient(handler);
             var service = new UpdateService(client);
 
             double lastProgress = 0;
-            var progress = new Progress<double>(p => lastProgress = p);
+            var progress = new SyncProgress<double>(p => lastProgress = p);
+            var update = new AppUpdateInfo
+            {
+                CurrentVersion = "1.0.0",
+                LatestVersion = "2.0.0",
+                HasUpdate = true,
+                DownloadUrl = "https://dummy.url/MCmodsLoader.exe",
+                DownloadSha256 = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(newBytes))
+            };
 
-            bool ok = await service.DownloadAndApplyUpdateAsync(
-                "https://dummy.url/MCmodsLoader.exe",
-                progress,
-                targetExePath: fakeTargetExe,
-                launchAndExit: false,
-                startExecutable: false);
+            bool ok = await service.ApplyUpdateAsync(update, fakeTargetExe, restartAndExit: false, progress, CancellationToken.None);
 
             Assert.True(ok);
-
-            string newExePath = Path.Combine(tempDir, "MCmodsLoader.new.exe");
-            Assert.True(File.Exists(newExePath));
-            string downloadedContent = await File.ReadAllTextAsync(newExePath);
-            Assert.Equal("New Binary Content v2.0.0", downloadedContent);
-
-            string batPath = Path.Combine(tempDir, "update_restart.bat");
-            Assert.True(File.Exists(batPath));
-            string batContent = await File.ReadAllTextAsync(batPath);
-            Assert.Contains(Environment.ProcessId.ToString(), batContent);
-            Assert.Contains("MCmodsLoader.new.exe", batContent);
-            Assert.Contains("MCmodsLoader.exe", batContent);
-            Assert.Contains("MOVE_RETRY", batContent);
+            Assert.Equal(100.0, lastProgress, 3);
+            Assert.Equal("MZ New Binary Content v2.0.0", await File.ReadAllTextAsync(fakeTargetExe));
+            Assert.Equal("MZ Original Content v1.0.0", await File.ReadAllTextAsync(Path.Combine(tempDir, "MCmodsLoader.old.exe")));
+            Assert.False(File.Exists(Path.Combine(tempDir, "MCmodsLoader.new.exe")), "The staged download must have been moved into place");
+            Assert.False(File.Exists(Path.Combine(tempDir, "update_restart.bat")), "The batch-script updater is gone");
         }
         finally
         {
@@ -280,55 +281,31 @@ public class UpdateServiceTests
     }
 
     [Fact]
-    public async Task UpdateRestartScript_ExecutesAndReplacesTargetExecutableSuccessfully()
+    public async Task ApplyUpdateAsync_WhenDownloadFails_LeavesCurrentExecutableUntouched()
     {
-        string tempDir = Path.Combine(Path.GetTempPath(), $"BatTest_{Guid.NewGuid():N}");
+        string tempDir = Path.Combine(Path.GetTempPath(), $"UpdateFailTest_{Guid.NewGuid():N}");
         Directory.CreateDirectory(tempDir);
         try
         {
             string fakeTargetExe = Path.Combine(tempDir, "MCmodsLoader.exe");
-            await File.WriteAllTextAsync(fakeTargetExe, "OLD_VERSION_100");
+            await File.WriteAllTextAsync(fakeTargetExe, "MZ OLD_VERSION_100");
 
-            byte[] newBytes = Encoding.UTF8.GetBytes("NEW_VERSION_200");
-            var handler = new MockBinaryHttpHandler(newBytes);
+            var handler = new MockBinaryHttpHandler(Array.Empty<byte>(), System.Net.HttpStatusCode.NotFound);
             using var client = new HttpClient(handler);
             var service = new UpdateService(client);
-
-            bool ok = await service.DownloadAndApplyUpdateAsync(
-                "https://dummy.url/MCmodsLoader.exe",
-                targetExePath: fakeTargetExe,
-                launchAndExit: false,
-                startExecutable: false,
-                processIdToWait: 0);
-
-            Assert.True(ok);
-
-            string batPath = Path.Combine(tempDir, "update_restart.bat");
-            string newExePath = Path.Combine(tempDir, "MCmodsLoader.new.exe");
-            Assert.True(File.Exists(batPath));
-            Assert.True(File.Exists(newExePath));
-
-            // Execute the generated batch script via cmd.exe
-            var psi = new System.Diagnostics.ProcessStartInfo
+            var update = new AppUpdateInfo
             {
-                FileName = "cmd.exe",
-                Arguments = $"/c \"{batPath}\"",
-                WorkingDirectory = tempDir,
-                UseShellExecute = false,
-                CreateNoWindow = true
+                CurrentVersion = "1.0.0",
+                LatestVersion = "2.0.0",
+                HasUpdate = true,
+                DownloadUrl = "https://dummy.url/MCmodsLoader.exe"
             };
 
-            using var proc = System.Diagnostics.Process.Start(psi);
-            Assert.NotNull(proc);
-            bool exited = proc.WaitForExit(10000);
-            Assert.True(exited, "Batch script execution should finish within 10 seconds");
+            bool ok = await service.ApplyUpdateAsync(update, fakeTargetExe, restartAndExit: false, null, CancellationToken.None);
 
-            // Verify file replacement
-            string updatedContent = await File.ReadAllTextAsync(fakeTargetExe);
-            Assert.Equal("NEW_VERSION_200", updatedContent);
-
-            // Verify new file was moved
-            Assert.False(File.Exists(newExePath), "MCmodsLoader.new.exe should no longer exist after move");
+            Assert.False(ok);
+            Assert.Equal("MZ OLD_VERSION_100", await File.ReadAllTextAsync(fakeTargetExe));
+            Assert.Equal(new[] { fakeTargetExe }, Directory.GetFiles(tempDir));
         }
         finally
         {
@@ -984,12 +961,17 @@ public class ModManagerServiceTests : IDisposable
 
     private class MockModrinthService : IModrinthService
     {
-        public Task<ModrinthVersionFile?> GetLatestVersionFileAsync(string projectSlugOrId, string mcVersion)
+        public Task<ModrinthVersionFile?> GetLatestVersionFileAsync(string projectSlugOrId, string mcVersion, CancellationToken ct = default)
         {
             return Task.FromResult<ModrinthVersionFile?>(null);
         }
 
-        public Task DownloadFileAsync(string downloadUrl, string targetFilePath, IProgress<double>? progress = null, CancellationToken ct = default)
+        public Task<IReadOnlyList<ModrinthProject>> GetProjectsAsync(IEnumerable<string> idsOrSlugs, CancellationToken ct = default)
+        {
+            return Task.FromResult<IReadOnlyList<ModrinthProject>>(Array.Empty<ModrinthProject>());
+        }
+
+        public Task DownloadFileAsync(string downloadUrl, string targetFilePath, IProgress<double>? progress = null, CancellationToken ct = default, string? expectedSha512 = null, string? expectedSha1 = null)
         {
             return Task.CompletedTask;
         }
@@ -997,12 +979,17 @@ public class ModManagerServiceTests : IDisposable
 
     private class FailingDownloadModrinthService : IModrinthService
     {
-        public Task<ModrinthVersionFile?> GetLatestVersionFileAsync(string projectSlugOrId, string mcVersion)
+        public Task<ModrinthVersionFile?> GetLatestVersionFileAsync(string projectSlugOrId, string mcVersion, CancellationToken ct = default)
         {
             return Task.FromResult<ModrinthVersionFile?>(null);
         }
 
-        public Task DownloadFileAsync(string downloadUrl, string targetFilePath, IProgress<double>? progress = null, CancellationToken ct = default)
+        public Task<IReadOnlyList<ModrinthProject>> GetProjectsAsync(IEnumerable<string> idsOrSlugs, CancellationToken ct = default)
+        {
+            return Task.FromResult<IReadOnlyList<ModrinthProject>>(Array.Empty<ModrinthProject>());
+        }
+
+        public Task DownloadFileAsync(string downloadUrl, string targetFilePath, IProgress<double>? progress = null, CancellationToken ct = default, string? expectedSha512 = null, string? expectedSha1 = null)
         {
             throw new HttpRequestException("Simulated download failure");
         }
@@ -1088,7 +1075,9 @@ public class FabricServiceTests : IDisposable
                      "fabric-loader-0.17.2-1.21.11",
                  })
         {
-            Directory.CreateDirectory(Path.Combine(versionsDir, folder));
+            string dir = Path.Combine(versionsDir, folder);
+            Directory.CreateDirectory(dir);
+            File.WriteAllText(Path.Combine(dir, $"{folder}.json"), "{}");
         }
 
         File.WriteAllText(Path.Combine(_tempDir, "launcher_profiles.json"), @"{
@@ -1124,6 +1113,8 @@ public class FabricServiceTests : IDisposable
 
         Assert.True(status.IsInstalled);
         Assert.Equal(expectedLoader, status.InstalledLoaderVersion);
+        Assert.Equal($"fabric-loader-{expectedLoader}-{mcVersion}", status.InstalledVersionId);
+        Assert.True(status.HasLauncherProfile);
         Assert.Equal(expectedProfileName, status.ProfileName);
     }
 

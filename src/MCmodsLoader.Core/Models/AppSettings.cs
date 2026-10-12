@@ -1,4 +1,5 @@
 using System.Text.Json;
+using MCmodsLoader.Core.Utils;
 
 namespace MCmodsLoader.Core.Models;
 
@@ -51,19 +52,14 @@ public sealed class AppSettings
         string path = customPath ?? GetDefaultSettingsFilePath();
         try
         {
-            string? dir = Path.GetDirectoryName(path);
-            if (!string.IsNullOrEmpty(dir))
-            {
-                Directory.CreateDirectory(dir);
-            }
-
             string json = $$"""
             {
               "includeXaeroMinimap": {{IncludeXaeroMinimap.ToString().ToLowerInvariant()}},
               "includeXaeroWorldMap": {{IncludeXaeroWorldMap.ToString().ToLowerInvariant()}}
             }
             """;
-            File.WriteAllText(path, json);
+            // Atomic, so a crash mid-save cannot leave a truncated settings file behind.
+            AtomicFile.WriteAllText(path, json);
         }
         catch
         {

@@ -11,12 +11,17 @@ public interface IMinecraftService
     bool IsValidMinecraftDirectory(string path);
     string GetModsDirectory(string minecraftPath);
     List<string> GetInstalledVersions(string minecraftPath);
-    Task<List<MinecraftVersionInfo>> GetAllAvailableVersionsAsync(string minecraftPath);
+    Task<List<MinecraftVersionInfo>> GetAllAvailableVersionsAsync(string minecraftPath, CancellationToken ct = default);
 }
 
 public partial class MinecraftService : IMinecraftService
 {
     private readonly HttpClient _httpClient;
+
+    // The caller's client may carry a long timeout meant for downloads.
+    private static readonly TimeSpan MetadataTimeout = TimeSpan.FromSeconds(20);
+
+    private static readonly JsonDocumentOptions LenientJson = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 
     [GeneratedRegex(@"^\d{2}w\d{2}[a-z]")]
     private static partial Regex SnapshotYearWeekRegex();
@@ -75,19 +80,62 @@ public partial class MinecraftService : IMinecraftService
         return OfficialReleaseRegex().IsMatch(version.Trim());
     }
 
+    // Process names (without .exe) of the Java Edition launchers: MinecraftLauncher is
+    // the standalone (MSI/legacy) launcher, Minecraft the Microsoft Store / Xbox app
+    // package. Bedrock runs as Minecraft.Windows and the game itself as javaw, so an
+    // exact match keeps both out.
+    private static readonly string[] LauncherProcessNames = { "MinecraftLauncher", "Minecraft" };
+
+    /// <summary>
+    /// True if a Minecraft launcher is running. It keeps launcher_profiles.json in memory
+    /// and may write it back later, dropping a profile added in the meantime, so callers
+    /// should ask the user to close it before installing Fabric.
+    /// </summary>
+    public static bool IsLauncherRunning()
+    {
+        foreach (var process in System.Diagnostics.Process.GetProcesses())
+        {
+            using (process)
+            {
+                try
+                {
+                    if (IsLauncherProcessName(process.ProcessName))
+                        return true;
+                }
+                catch
+                {
+                    // Exited while being enumerated.
+                }
+            }
+        }
+        return false;
+    }
+
+    internal static bool IsLauncherProcessName(string processName)
+    {
+        string name = processName.EndsWith(".exe", StringComparison.OrdinalIgnoreCase) ? processName[..^4] : processName;
+        return LauncherProcessNames.Any(n => n.Equals(name, StringComparison.OrdinalIgnoreCase));
+    }
+
     public string GetDefaultMinecraftDirectory()
     {
         string appData = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
         return Path.Combine(appData, ".minecraft");
     }
 
+    /// <summary>
+    /// True for a folder the launcher has already set up: it holds a launcher profile
+    /// file or a versions directory. Any other folder (Documents, say) is rejected
+    /// rather than having mods, versions and profiles created inside it.
+    /// </summary>
     public bool IsValidMinecraftDirectory(string path)
     {
         if (string.IsNullOrWhiteSpace(path) || !Directory.Exists(path))
             return false;
 
-        // Valid if directory exists and has typical files/dirs or can have them created
-        return true;
+        return File.Exists(Path.Combine(path, "launcher_profiles.json")) ||
+               File.Exists(Path.Combine(path, "launcher_profiles_microsoft_store.json")) ||
+               Directory.Exists(Path.Combine(path, "versions"));
     }
 
     public string GetModsDirectory(string minecraftPath)
@@ -151,12 +199,14 @@ public partial class MinecraftService : IMinecraftService
             try
             {
                 using var stream = File.OpenRead(launcherProfilesPath);
-                using var doc = JsonDocument.Parse(stream);
+                using var doc = JsonDocument.Parse(stream, LenientJson);
                 if (doc.RootElement.TryGetProperty("profiles", out var profilesProp) && profilesProp.ValueKind == JsonValueKind.Object)
                 {
                     foreach (var profile in profilesProp.EnumerateObject())
                     {
-                        if (profile.Value.TryGetProperty("lastVersionId", out var lastVerId))
+                        if (profile.Value.ValueKind == JsonValueKind.Object &&
+                            profile.Value.TryGetProperty("lastVersionId", out var lastVerId) &&
+                            lastVerId.ValueKind == JsonValueKind.String)
                         {
                             string ver = lastVerId.GetString() ?? "";
                             // The launcher's "latest-release" and "latest-snapshot"
@@ -192,22 +242,25 @@ public partial class MinecraftService : IMinecraftService
         return versions.OrderByDescending(v => v, MinecraftVersionComparer.Instance).ToList();
     }
 
-    public async Task<List<MinecraftVersionInfo>> GetAllAvailableVersionsAsync(string minecraftPath)
+    public async Task<List<MinecraftVersionInfo>> GetAllAvailableVersionsAsync(string minecraftPath, CancellationToken ct = default)
     {
         var installed = new HashSet<string>(GetInstalledVersions(minecraftPath), StringComparer.OrdinalIgnoreCase);
         var result = new List<MinecraftVersionInfo>();
 
         try
         {
-            var response = await _httpClient.GetAsync("https://meta.fabricmc.net/v2/versions/game");
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(MetadataTimeout);
+
+            using var response = await _httpClient.GetAsync("https://meta.fabricmc.net/v2/versions/game", cts.Token);
             if (response.IsSuccessStatusCode)
             {
-                using var stream = await response.Content.ReadAsStreamAsync();
-                using var doc = await JsonDocument.ParseAsync(stream);
+                using var stream = await response.Content.ReadAsStreamAsync(cts.Token);
+                using var doc = await JsonDocument.ParseAsync(stream, cancellationToken: cts.Token);
                 foreach (var el in doc.RootElement.EnumerateArray())
                 {
-                    string version = el.GetProperty("version").GetString() ?? "";
-                    bool stable = el.TryGetProperty("stable", out var s) && s.GetBoolean();
+                    string version = el.TryGetProperty("version", out var v) && v.ValueKind == JsonValueKind.String ? v.GetString() ?? "" : "";
+                    bool stable = el.TryGetProperty("stable", out var s) && s.ValueKind == JsonValueKind.True;
                     
                     // Only include official releases (exclude snapshots, pre-releases, and test builds)
                     if (!stable || string.IsNullOrEmpty(version) || !IsOfficialRelease(version))

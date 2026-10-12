@@ -55,12 +55,30 @@ internal sealed class UiSyncContext : SynchronizationContext
 
     public override SynchronizationContext CreateCopy() => this;
 
-    /// <summary>Runs every callback queued so far. Called from the window procedure.</summary>
+    /// <summary>
+    /// Receives what a queued callback throws, e.g. a Progress&lt;T&gt; handler. Await
+    /// continuations never throw here; their exceptions are stored in their Task.
+    /// </summary>
+    public Action<Exception>? UnhandledException { get; set; }
+
+    /// <summary>
+    /// Runs every callback queued so far. Called from the window procedure, and
+    /// re-entered from any modal loop (a message box) that a callback opens.
+    /// </summary>
     public void Drain()
     {
         while (_queue.TryDequeue(out var work))
         {
-            work.Callback(work.State);
+            try
+            {
+                work.Callback(work.State);
+            }
+            catch (Exception ex) when (UnhandledException is not null)
+            {
+                // Letting it escape would end the process (NativeAOT) and, short of
+                // that, strand the callbacks still queued behind this one.
+                UnhandledException(ex);
+            }
         }
     }
 }

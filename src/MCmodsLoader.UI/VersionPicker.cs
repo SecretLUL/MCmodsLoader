@@ -79,8 +79,16 @@ internal sealed class VersionPicker
         else Open(ownerWindow);
     }
 
+    /// <remarks>
+    /// Runs inside the field's subclass procedure, where an exception would end the
+    /// process, so every path has to cope with an empty list and a closed popup.
+    /// </remarks>
     private bool OnFieldKeyDown(int virtualKey)
     {
+        // A disabled field can keep the focus; it must not change the selection while
+        // the window is busy with the current one.
+        if (!Field.IsEnabled) return true;
+
         switch (virtualKey)
         {
             case Native.VK_DOWN when !IsOpen:
@@ -92,10 +100,10 @@ internal sealed class VersionPicker
 
             case Native.VK_DOWN: MoveHover(1); return true;
             case Native.VK_UP: MoveHover(-1); return true;
-            case Native.VK_NEXT: MoveHover(MaxVisibleItems); return true;
-            case Native.VK_PRIOR: MoveHover(-MaxVisibleItems); return true;
-            case Native.VK_HOME: SetHover(0); return true;
-            case Native.VK_END: SetHover(_items.Count - 1); return true;
+            case Native.VK_NEXT when IsOpen: MoveHover(MaxVisibleItems); return true;
+            case Native.VK_PRIOR when IsOpen: MoveHover(-MaxVisibleItems); return true;
+            case Native.VK_HOME when IsOpen: SetHover(0); return true;
+            case Native.VK_END when IsOpen: SetHover(_items.Count - 1); return true;
 
             case Native.VK_RETURN or Native.VK_SPACE when IsOpen:
                 Commit(_hover);
@@ -109,7 +117,8 @@ internal sealed class VersionPicker
         return false;
     }
 
-    private void MoveHover(int delta) => SetHover(Math.Clamp(_hover + delta, 0, _items.Count - 1));
+    // SetHover clamps; clamping here as well would throw for an empty list (max < min).
+    private void MoveHover(int delta) => SetHover(_hover + delta);
 
     private void SetHover(int index)
     {
@@ -210,9 +219,20 @@ internal sealed class VersionPicker
     }
 
     private static nint StaticPopupProc(nint hwnd, uint msg, nint wParam, nint lParam)
-        => _openPicker is { } picker
-            ? picker.PopupProc(hwnd, msg, wParam, lParam)
-            : Native.DefWindowProcW(hwnd, msg, wParam, lParam);
+    {
+        if (_openPicker is not { } picker) return Native.DefWindowProcW(hwnd, msg, wParam, lParam);
+
+        try
+        {
+            return picker.PopupProc(hwnd, msg, wParam, lParam);
+        }
+        catch (Exception ex)
+        {
+            // An exception escaping into user32 ends a NativeAOT process on the spot.
+            MainWindow.ReportCallbackError(msg, ex);
+            return 0;
+        }
+    }
 
     private nint PopupProc(nint hwnd, uint msg, nint wParam, nint lParam)
     {
@@ -286,59 +306,39 @@ internal sealed class VersionPicker
         return index >= 0 && index < _items.Count ? index : -1;
     }
 
-    private void PaintPopup(nint hwnd)
+    private void PaintPopup(nint hwnd) => Gdi.PaintBuffered(hwnd, (memDc, client) =>
     {
-        nint hdc = Native.BeginPaint(hwnd, out var ps);
-        try
+        Gdi.RoundRect(memDc, client, 0, Theme.Card, Theme.CardBorder);
+
+        int itemH = _theme.Scale(ItemHeight96);
+        int padding = _theme.Scale(10);
+        int visible = VisibleCount();
+
+        for (int row = 0; row < visible; row++)
         {
-            Native.GetClientRect(hwnd, out var client);
+            int index = _scroll + row;
+            if (index >= _items.Count) break;
 
-            nint memDc = Native.CreateCompatibleDC(hdc);
-            nint bitmap = Native.CreateCompatibleBitmap(hdc, client.Width, client.Height);
-            nint oldBitmap = Native.SelectObject(memDc, bitmap);
+            var itemRect = Native.RECT.Xywh(1, 1 + row * itemH, client.Width - 2, itemH);
 
-            Gdi.RoundRect(memDc, client, 0, Theme.Card, Theme.CardBorder);
-
-            int itemH = _theme.Scale(ItemHeight96);
-            int padding = _theme.Scale(10);
-            int visible = VisibleCount();
-
-            for (int row = 0; row < visible; row++)
+            if (index == _hover)
             {
-                int index = _scroll + row;
-                if (index >= _items.Count) break;
-
-                var itemRect = Native.RECT.Xywh(1, 1 + row * itemH, client.Width - 2, itemH);
-
-                if (index == _hover)
-                {
-                    nint brush = Native.CreateSolidBrush(Theme.CardBorder);
-                    Gdi.Fill(memDc, itemRect, brush);
-                    Native.DeleteObject(brush);
-                }
-
-                var textRect = itemRect;
-                textRect.Left += padding;
-                textRect.Right -= padding;
-
-                Gdi.Text(memDc, _items[index], textRect, _theme.FontBody,
-                    index == _selected ? Theme.Accent : Theme.TextPrimary,
-                    Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE | Native.DT_END_ELLIPSIS);
+                nint brush = Native.CreateSolidBrush(Theme.CardBorder);
+                Gdi.Fill(memDc, itemRect, brush);
+                Native.DeleteObject(brush);
             }
 
-            PaintScrollIndicator(memDc, client, visible);
+            var textRect = itemRect;
+            textRect.Left += padding;
+            textRect.Right -= padding;
 
-            Native.BitBlt(hdc, 0, 0, client.Width, client.Height, memDc, 0, 0, Native.SRCCOPY);
+            Gdi.Text(memDc, _items[index], textRect, _theme.FontBody,
+                index == _selected ? Theme.Accent : Theme.TextPrimary,
+                Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE | Native.DT_END_ELLIPSIS);
+        }
 
-            Native.SelectObject(memDc, oldBitmap);
-            Native.DeleteObject(bitmap);
-            Native.DeleteDC(memDc);
-        }
-        finally
-        {
-            Native.EndPaint(hwnd, ref ps);
-        }
-    }
+        PaintScrollIndicator(memDc, client, visible);
+    });
 
     /// <summary>A slim thumb on the right edge; the system scrollbar would be light.</summary>
     private void PaintScrollIndicator(nint dc, Native.RECT client, int visible)

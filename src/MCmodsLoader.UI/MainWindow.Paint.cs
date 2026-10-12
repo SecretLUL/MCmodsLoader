@@ -10,35 +10,14 @@ namespace MCmodsLoader.UI;
 /// </summary>
 internal sealed partial class MainWindow
 {
-    private void OnPaint()
+    private void OnPaint() => Gdi.PaintBuffered(_hwnd, (memDc, client) =>
     {
-        nint hdc = Native.BeginPaint(_hwnd, out var ps);
-        try
-        {
-            Native.GetClientRect(_hwnd, out var client);
-
-            // Draw into a memory bitmap and blit once, so nothing flickers.
-            nint memDc = Native.CreateCompatibleDC(hdc);
-            nint bitmap = Native.CreateCompatibleBitmap(hdc, client.Width, client.Height);
-            nint oldBitmap = Native.SelectObject(memDc, bitmap);
-
-            Gdi.Fill(memDc, client, _theme.BackgroundBrush);
-            PaintHeader(memDc);
-            if (_bannerVisible) PaintBanner(memDc);
-            PaintCards(memDc);
-            PaintAction(memDc);
-
-            Native.BitBlt(hdc, 0, 0, client.Width, client.Height, memDc, 0, 0, Native.SRCCOPY);
-
-            Native.SelectObject(memDc, oldBitmap);
-            Native.DeleteObject(bitmap);
-            Native.DeleteDC(memDc);
-        }
-        finally
-        {
-            Native.EndPaint(_hwnd, ref ps);
-        }
-    }
+        Gdi.Fill(memDc, client, _theme.BackgroundBrush);
+        PaintHeader(memDc);
+        if (_bannerVisible) PaintBanner(memDc);
+        PaintCards(memDc);
+        PaintAction(memDc);
+    });
 
     private void PaintHeader(nint dc)
     {
