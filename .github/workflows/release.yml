@@ -1,24 +1,137 @@
 name: Release Build
 
+# A release takes nothing but the mouse: Actions -> Release Build -> "Run workflow",
+# pick which number goes up, done. The version is counted from the newest release
+# tag, the NativeAOT executable is built and tested under it, and the tag is pushed
+# only once that build has succeeded - a failed build leaves no tag behind that
+# nothing was ever released under.
+#
+# Pushing a tag by hand still works; that path releases exactly that tag.
 on:
   push:
     tags:
       - 'v*'
+  # The dropdown names the kind of step rather than the number it lands on,
+  # because its options are fixed in this file: showing the next version there
+  # would mean rewriting the workflow with every release.
   workflow_dispatch:
+    inputs:
+      bump:
+        description: 'Which number of the newest release goes up by one (major.minor.patch)'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: patch
+      dry_run:
+        description: 'Rehearsal: build and test everything, but push no tag and publish no release'
+        required: false
+        type: boolean
+        default: false
+
+# Two releases in flight at once would race for the same tag.
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
-  build-and-release:
-    runs-on: windows-latest
+  # A job of its own so that "Re-run failed jobs" after a failed publish keeps the
+  # number it resolved: run again, it would count on from the tag it just pushed.
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.v.outputs.tag }}
+      version: ${{ steps.v.outputs.version }}
+      numeric: ${{ steps.v.outputs.numeric }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
+      # Inputs reach the shell through the environment rather than through ${{ }}
+      # interpolation, which would splice them into the script itself.
+      - name: Resolve Version
+        id: v
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BUMP: ${{ inputs.bump }}
+          DRY_RUN: ${{ inputs.dry_run }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            # A real release comes from the default branch; a rehearsal may run
+            # anywhere, which is how the workflow itself can be tried out.
+            if [ "$DRY_RUN" != "true" ] && [ "$GITHUB_REF" != "refs/heads/$DEFAULT_BRANCH" ]; then
+              echo "::error::Releases are made from $DEFAULT_BRANCH. Pick it under 'Use workflow from', or tick the rehearsal to try another branch."
+              exit 1
+            fi
+
+            # Counted from the newest release tag on the remote. Pre-releases
+            # such as v1.3.0-beta.1 do not count.
+            latest=$(git ls-remote --tags --refs origin 'refs/tags/v*' \
+              | sed -n 's#.*refs/tags/v\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)$#\1#p' \
+              | sort -V | tail -n 1)
+            if [ -z "$latest" ]; then
+              echo "::error::There is no release tag (vX.Y.Z) to count from."
+              exit 1
+            fi
+            IFS=. read -r major minor patch <<< "$latest"
+            case "$BUMP" in
+              major) version="$((major + 1)).0.0" ;;
+              minor) version="$major.$((minor + 1)).0" ;;
+              patch) version="$major.$minor.$((patch + 1))" ;;
+              *) echo "::error::Unknown bump: '$BUMP'"; exit 1 ;;
+            esac
+            echo "$BUMP after v$latest"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+
+          if ! [[ "$version" =~ ^([0-9]+\.[0-9]+\.[0-9]+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?$ ]]; then
+            echo "::error::Not a version: '$version' (expected something like 1.2.3 or 1.3.0-beta.1)"
+            exit 1
+          fi
+          # AssemblyVersion and FileVersion must be purely numeric, so a
+          # pre-release such as 1.3.0-beta.1 carries 1.3.0 there.
+          numeric="${BASH_REMATCH[1]}"
+          tag="v$version"
+
+          # The cheapest failure there is: a tag that exists already means the
+          # release does too, and finding that out after the build helps nobody.
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] \
+              && git ls-remote --exit-code --tags origin "refs/tags/$tag" > /dev/null; then
+            echo "::error::$tag exists already."
+            exit 1
+          fi
+
+          echo "Releasing $tag"
+          {
+            echo "tag=$tag"
+            echo "version=$version"
+            echo "numeric=$numeric"
+          } >> "$GITHUB_OUTPUT"
+          echo "### Releasing \`$tag\`" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: Build NativeAOT executable
+    needs: version
+    runs-on: windows-latest
+    env:
+      VERSION: ${{ needs.version.outputs.version }}
+      NUMERIC: ${{ needs.version.outputs.numeric }}
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          # Full history and tags, so builds without an explicit version (a manual
-          # run on a branch) still resolve it from the newest tag.
+          # Full history and tags, so the test build resolves its version from the
+          # newest tag the same way a local clone does.
           fetch-depth: 0
 
       - name: Setup .NET
@@ -35,50 +148,112 @@ jobs:
       - name: Publish NativeAOT Executable
         shell: pwsh
         run: |
-          # v1.3.0-beta.1 -> Version 1.3.0-beta.1, AssemblyVersion/FileVersion 1.3.0
-          # (both must be purely numeric). A ref that is not a version tag passes
-          # nothing and leaves the version to Directory.Build.props.
-          $rawRef = "${{ github.ref_name }}"
-          $versionArgs = @()
-          if ($rawRef -match '^v?((\d+\.\d+\.\d+)(-[0-9A-Za-z][0-9A-Za-z.-]*)?)$') {
-            $version = $matches[1]
-            $numeric = $matches[2]
-            $versionArgs = @(
-              "-p:Version=$version",
-              "-p:AssemblyVersion=$numeric",
-              "-p:FileVersion=$numeric",
-              "-p:InformationalVersion=$version"
-            )
-            Write-Host "Publishing MCmodsLoader version: $version as a native binary..."
-          } else {
-            Write-Host "'$rawRef' is not a version tag; the version comes from the newest Git tag."
-          }
-
           # The AOT link step shells out to vswhere.exe to find the MSVC linker, and
           # vswhere is not on PATH by default.
           $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
           if (Test-Path $installer) { $env:PATH = "$installer;$env:PATH" }
 
+          Write-Host "Publishing MCmodsLoader $env:VERSION as a native binary..."
           dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
             -c Release `
             -r win-x64 `
-            @versionArgs `
+            "-p:Version=$env:VERSION" `
+            "-p:AssemblyVersion=$env:NUMERIC" `
+            "-p:FileVersion=$env:NUMERIC" `
+            "-p:InformationalVersion=$env:VERSION" `
             -o publish
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
           $exe = Get-Item publish/MCmodsLoader.exe
           Write-Host "Produced $($exe.Name): $([math]::Round($exe.Length / 1MB, 2)) MB"
 
+      # The self-updater compares the version this executable reports with the
+      # newest release, so one built under the wrong number would keep offering
+      # its own release as an update. Asked of the artifact itself, before it ships.
+      - name: Verify the Executable Reports the Released Version
+        shell: pwsh
+        run: |
+          $info = (Get-Item publish/MCmodsLoader.exe).VersionInfo
+          $product = ($info.ProductVersion -split '\+')[0]
+          $file = "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart)"
+          Write-Host "ProductVersion $($info.ProductVersion), FileVersion $($info.FileVersion)"
+          if ($product -ne $env:VERSION -or $file -ne $env:NUMERIC) {
+            throw "MCmodsLoader.exe calls itself $($info.ProductVersion) (file $file), but this is release $env:VERSION. Refusing to publish it."
+          }
+
+      # Kept with the run as well: after a rehearsal, this is what can be
+      # downloaded and tried.
+      - name: Upload the Executable
+        uses: actions/upload-artifact@v4
+        with:
+          name: MCmodsLoader-${{ needs.version.outputs.tag }}
+          path: publish/MCmodsLoader.exe
+          if-no-files-found: error
+
+  publish:
+    name: Tag and publish
+    needs: [version, build]
+    # A rehearsal is the only reason not to publish; a pushed tag has no dry_run
+    # input to consult.
+    if: github.event_name != 'workflow_dispatch' || !inputs.dry_run
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      TAG: ${{ needs.version.outputs.tag }}
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Download the Executable
+        uses: actions/download-artifact@v4
+        with:
+          name: MCmodsLoader-${{ needs.version.outputs.tag }}
+          path: publish/
+
+      # Set on the commit that was built, not left to the release step, which would
+      # create the tag on whatever the default branch points at by now. A tag pushed
+      # with GITHUB_TOKEN starts no workflow run of its own, so the tag trigger above
+      # does not release this version a second time.
+      - name: Push the Release Tag
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          # "Re-run failed jobs" after a failed publish finds its own tag there
+          # already; the version job, which refuses existing tags, is not run again.
+          if git ls-remote --exit-code --tags origin "refs/tags/$TAG" > /dev/null; then
+            echo "$TAG is on the remote already, from an earlier attempt of this run."
+            exit 0
+          fi
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git tag -a "$TAG" -m "MCmodsLoader $TAG" "$GITHUB_SHA"
+          git push origin "refs/tags/$TAG"
+
+      # Hand-written notes can be put at docs/release-notes/<tag>.md before the
+      # release; GitHub's list of changes is added below them either way.
+      - name: Resolve Release Notes
+        id: notes
+        run: |
+          notes="docs/release-notes/$TAG.md"
+          if [ -f "$notes" ]; then
+            echo "Using $notes"
+            echo "body_path=$notes" >> "$GITHUB_OUTPUT"
+          else
+            echo "No hand-written notes at $notes; GitHub generates them from the changes."
+            echo "body_path=" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
-        if: startsWith(github.ref, 'refs/tags/')
         with:
-          files: publish/MCmodsLoader.exe
-          name: Release ${{ github.ref_name }}
-          draft: false
+          tag_name: ${{ env.TAG }}
+          name: Release ${{ env.TAG }}
           # Tags such as v1.3.0-beta.1 ship as pre-releases, which /releases/latest
           # (and therefore the self-updater) skips.
-          prerelease: ${{ contains(github.ref_name, '-') }}
+          prerelease: ${{ contains(env.TAG, '-') }}
+          body_path: ${{ steps.notes.outputs.body_path }}
           generate_release_notes: true
+          files: publish/MCmodsLoader.exe
+          fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

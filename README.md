@@ -119,6 +119,16 @@ dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
 extra flags are needed. The output `./publish/MCmodsLoader.exe` is around 6 MB, runs on
 a machine with no .NET installed, and is the only file the release ships.
 
+### Releasing
+Releases are made on GitHub: **Actions → Release Build → Run workflow**, pick which
+number of the newest release goes up (`patch`, `minor` or `major`) and start it. The
+workflow counts the new version from the newest release tag, builds and tests the
+executable under it, and pushes the tag only once that build has passed. Tick
+**dry run** for a rehearsal that builds everything and attaches the executable to the
+run, but pushes no tag and publishes no release. Notes placed at
+`docs/release-notes/<tag>.md` appear above the generated list of changes. Pushing a
+`v*` tag by hand still releases exactly that tag.
+
 ---
 
 ## 🤝 Contributing & Support
