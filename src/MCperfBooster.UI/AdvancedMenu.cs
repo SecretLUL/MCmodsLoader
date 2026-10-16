@@ -17,20 +17,31 @@ internal sealed class AdvancedMenu
     private int _hoverRow = -1;
     private IReadOnlyList<Option> _options = Array.Empty<Option>();
 
-    /// <summary>One row: a mod that can be switched on or off. <see cref="Key"/> is what <see cref="ModToggled"/> reports.</summary>
+    /// <summary>
+    /// One row: something that can be switched on or off. <see cref="Key"/> is what <see cref="ModToggled"/> reports.
+    /// Rows with the same <see cref="Section"/> that follow each other share one header.
+    /// </summary>
     public sealed class Option
     {
-        public Option(string key, string label, bool isChecked)
+        /// <summary>The section the optional mods were always shown under.</summary>
+        public const string DefaultSection = "OPTIONAL MODS";
+
+        public Option(string key, string label, bool isChecked, string section = DefaultSection)
         {
             Key = key;
             Label = label;
             IsChecked = isChecked;
+            Section = section;
         }
 
         public string Key { get; }
         public string Label { get; }
+        public string Section { get; }
         public bool IsChecked { get; set; }
     }
+
+    /// <summary>One line of the popup: the header of a section (<see cref="Row"/> is -1) or the row of an option.</summary>
+    private readonly record struct Slot(int Top, int Height, int Row, string Section);
 
     public Action<string, bool>? ModToggled { get; set; }
 
@@ -68,9 +79,8 @@ internal sealed class AdvancedMenu
         EnsurePopupWindow();
 
         int width = _theme.Scale(185);
-        int headerH = _theme.Scale(24);
-        int rowH = _theme.Scale(28);
-        int height = headerH + _options.Count * rowH + _theme.Scale(6);
+        var layout = Layout();
+        int height = (layout.Count > 0 ? layout[^1].Top + layout[^1].Height : 0) + _theme.Scale(6);
 
         nint monitor = Native.MonitorFromWindow(ownerWindow, Native.MONITOR_DEFAULTTONEAREST);
         var info = new Native.MONITORINFO { CbSize = (uint)Marshal.SizeOf<Native.MONITORINFO>() };
@@ -266,17 +276,45 @@ internal sealed class AdvancedMenu
         return Native.DefWindowProcW(hwnd, msg, wParam, lParam);
     }
 
+    /// <summary>
+    /// The popup top to bottom: a header above the first row of every section, then its rows. Height, mouse
+    /// target and painting all read this one list, so they cannot disagree about where a header pushed the rows.
+    /// </summary>
+    private List<Slot> Layout()
+    {
+        int headerH = _theme.Scale(24);
+        int rowH = _theme.Scale(28);
+
+        var slots = new List<Slot>(_options.Count + 2);
+        int top = 0;
+        for (int row = 0; row < _options.Count; row++)
+        {
+            string section = _options[row].Section;
+            if (row == 0 || section != _options[row - 1].Section)
+            {
+                slots.Add(new Slot(top, headerH, -1, section));
+                top += headerH;
+            }
+
+            slots.Add(new Slot(top, rowH, row, section));
+            top += rowH;
+        }
+
+        return slots;
+    }
+
+    /// <summary>The option under a point, or -1 over a header, the padding or outside of the popup.</summary>
     private int RowFromPoint(nint hwnd, int x, int y)
     {
         Native.GetClientRect(hwnd, out var client);
         if (x < 0 || y < 0 || x >= client.Width || y >= client.Height) return -1;
 
-        int headerH = _theme.Scale(24);
-        int rowH = _theme.Scale(28);
+        foreach (var slot in Layout())
+        {
+            if (y >= slot.Top && y < slot.Top + slot.Height) return slot.Row;
+        }
 
-        if (y < headerH) return -1;
-        int row = (y - headerH) / rowH;
-        return row < _options.Count ? row : -1;
+        return -1;
     }
 
     private void PaintPopup(nint hwnd) => Gdi.PaintBuffered(hwnd, (memDc, client) =>
@@ -287,16 +325,19 @@ internal sealed class AdvancedMenu
         Gdi.RoundRect(memDc, client, _theme.Scale(6), Theme.Card, Theme.CardBorder);
 
         int pad = _theme.Scale(12);
-        int headerH = _theme.Scale(24);
-        int rowH = _theme.Scale(28);
 
-        var headerRect = Native.RECT.Xywh(pad, _theme.Scale(4), client.Width - 2 * pad, headerH);
-        Gdi.Text(memDc, "OPTIONAL MODS", headerRect, _theme.FontLabel, Theme.TextMuted,
-            Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE);
-
-        for (int row = 0; row < _options.Count; row++)
+        foreach (var slot in Layout())
         {
-            DrawRow(memDc, client, row, headerH + row * rowH, rowH, pad, _options[row].Label, _options[row].IsChecked);
+            if (slot.Row < 0)
+            {
+                var headerRect = Native.RECT.Xywh(pad, slot.Top + _theme.Scale(4), client.Width - 2 * pad, slot.Height);
+                Gdi.Text(memDc, slot.Section, headerRect, _theme.FontLabel, Theme.TextMuted,
+                    Native.DT_LEFT | Native.DT_VCENTER | Native.DT_SINGLELINE);
+            }
+            else
+            {
+                DrawRow(memDc, client, slot.Row, slot.Top, slot.Height, pad, _options[slot.Row].Label, _options[slot.Row].IsChecked);
+            }
         }
     });
 

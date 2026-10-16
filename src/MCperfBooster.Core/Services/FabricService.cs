@@ -21,6 +21,14 @@ public interface IFabricService
     Task<FabricStatus> EnsureLauncherProfileAsync(string minecraftPath, string mcVersion, CancellationToken ct = default);
 }
 
+/// <summary>
+/// What <see cref="FabricService.ApplyJavaSettings"/> found: how many profiles it is about
+/// (<see cref="Matched"/>) and how many of those it had to change (<see cref="Changed"/>). No match means
+/// there is nothing to set the Java on; a match that did not change means it was set up already.
+/// A profile in a file that could not be read or written counts for neither.
+/// </summary>
+public sealed record ProfileJavaUpdate(int Matched, int Changed);
+
 public class FabricService : IFabricService
 {
     private readonly HttpClient _httpClient;
@@ -718,18 +726,18 @@ public class FabricService : IFabricService
     /// Sets the Java arguments and the Java executable (<paramref name="javaExecutable"/> is the path to
     /// javaw.exe; null removes the setting, so the launcher uses its own Java again) on every Fabric profile of
     /// this game version. Profiles with a game folder of their own belong to another modpack and are left alone.
-    /// Returns how many profiles actually changed, over both launcher profile files; a file that cannot be
-    /// read or written is skipped.
+    /// Returns how many profiles it is about and how many of those actually changed, over both launcher
+    /// profile files; a file that cannot be read or written is skipped.
     /// </summary>
-    public static int ApplyJavaSettings(string minecraftPath, string mcVersion, string? javaExecutable, string javaArgs)
+    public static ProfileJavaUpdate ApplyJavaSettings(string minecraftPath, string mcVersion, string? javaExecutable, string javaArgs)
     {
         return EditProfiles(minecraftPath, profile =>
         {
             if (ReadString(profile, "lastVersionId") is not { } versionId || ExtractLoaderVersion(versionId, mcVersion) == null)
-                return false;
+                return ProfileEdit.NotApplicable;
 
             if (ReadString(profile, "gameDir") is { Length: > 0 } gameDir && !IsSamePath(gameDir, minecraftPath))
-                return false;
+                return ProfileEdit.NotApplicable;
 
             bool changed = SetString(profile, "javaArgs", javaArgs);
             if (javaExecutable != null)
@@ -737,7 +745,7 @@ public class FabricService : IFabricService
             else
                 changed |= profile.Remove("javaDir");
 
-            return changed;
+            return changed ? ProfileEdit.Changed : ProfileEdit.AlreadyDone;
         });
     }
 
@@ -752,22 +760,37 @@ public class FabricService : IFabricService
         return EditProfiles(minecraftPath, profile =>
         {
             if (ReadString(profile, "javaDir") is not { Length: > 0 } javaDir || !IsPathBelow(javaDir, runtimesRoot))
-                return false;
+                return ProfileEdit.NotApplicable;
 
             profile.Remove("javaDir");
             if (ReadString(profile, "lastVersionId") is { } versionId && FindFabricJavaArgs(versionId, argsForGameVersion) is { } javaArgs)
                 SetString(profile, "javaArgs", javaArgs);
 
-            return true;
-        });
+            return ProfileEdit.Changed;
+        }).Changed;
+    }
+
+    /// <summary>What an edit made of one launcher profile.</summary>
+    private enum ProfileEdit
+    {
+        /// <summary>The edit is not about this profile; it was left alone.</summary>
+        NotApplicable,
+
+        /// <summary>The edit is about this profile, which was as wanted already.</summary>
+        AlreadyDone,
+
+        /// <summary>The edit is about this profile and changed it.</summary>
+        Changed,
     }
 
     /// <summary>
     /// Runs <paramref name="edit"/> on every profile in the launcher profile files and rewrites a file only
-    /// when it reported a change. Returns the number of profiles changed in files that were written.
+    /// when it reported a change. Counts the profiles the edit was about and the ones it changed, in files
+    /// that could be read and, where there was something to change, written.
     /// </summary>
-    private static int EditProfiles(string minecraftPath, Func<JsonObject, bool> edit)
+    private static ProfileJavaUpdate EditProfiles(string minecraftPath, Func<JsonObject, ProfileEdit> edit)
     {
+        int matchedProfiles = 0;
         int changedProfiles = 0;
         foreach (string fileName in ProfileFileNames)
         {
@@ -786,18 +809,28 @@ public class FabricService : IFabricService
                 if (rootObj?["profiles"] is not JsonObject profiles)
                     continue;
 
+                int matchedHere = 0;
                 int changedHere = 0;
                 foreach (var entry in profiles)
                 {
-                    if (entry.Value is JsonObject profile && edit(profile))
+                    if (entry.Value is not JsonObject profile)
+                        continue;
+
+                    ProfileEdit result = edit(profile);
+                    if (result != ProfileEdit.NotApplicable)
+                        matchedHere++;
+                    if (result == ProfileEdit.Changed)
                         changedHere++;
                 }
 
-                if (changedHere == 0)
-                    continue;
+                if (changedHere > 0)
+                {
+                    // Atomic, so a crash mid-write cannot corrupt the user's profiles.
+                    AtomicFile.WriteAllText(file, rootObj.ToJsonString(ProfileWriteOptions));
+                }
 
-                // Atomic, so a crash mid-write cannot corrupt the user's profiles.
-                AtomicFile.WriteAllText(file, rootObj.ToJsonString(ProfileWriteOptions));
+                // Counted only now: a file that failed above must not report profiles it did not manage to set up.
+                matchedProfiles += matchedHere;
                 changedProfiles += changedHere;
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException)
@@ -807,7 +840,7 @@ public class FabricService : IFabricService
             }
         }
 
-        return changedProfiles;
+        return new ProfileJavaUpdate(matchedProfiles, changedProfiles);
     }
 
     /// <summary>

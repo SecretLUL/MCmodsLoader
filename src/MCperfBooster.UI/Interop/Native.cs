@@ -58,8 +58,8 @@ internal static class Native
     public const uint TME_LEAVE = 0x0002;
     public const int DWMWA_USE_IMMERSIVE_DARK_MODE = 20;
     public const uint SWP_NOMOVE = 0x0002, SWP_NOZORDER = 0x0004, SWP_NOACTIVATE = 0x0010;
-    public const uint MB_OK = 0x0, MB_YESNO = 0x4, MB_ICONERROR = 0x10, MB_ICONWARNING = 0x30, MB_ICONINFORMATION = 0x40,
-                      MB_DEFBUTTON2 = 0x100;
+    public const uint MB_OK = 0x0, MB_YESNO = 0x4, MB_ICONERROR = 0x10, MB_ICONQUESTION = 0x20, MB_ICONWARNING = 0x30,
+                      MB_ICONINFORMATION = 0x40, MB_DEFBUTTON2 = 0x100;
     public const int IDYES = 6;
     public const uint BIF_RETURNONLYFSDIRS = 0x0001, BIF_EDITBOX = 0x0010, BIF_NEWDIALOGSTYLE = 0x0040;
     public const uint SRCCOPY = 0x00CC0020;

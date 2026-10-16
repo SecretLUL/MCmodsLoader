@@ -64,10 +64,10 @@ public class FabricJavaSettingsTests : IDisposable
     {
         File.WriteAllText(ProfilesFile, SampleProfiles());
 
-        int changed = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xms6G -Xmx6G");
+        var update = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xms6G -Xmx6G");
 
         // The profile of the app, and the ones that use this very game folder (spelled differently or not at all).
-        Assert.Equal(5, changed);
+        Assert.Equal(new ProfileJavaUpdate(Matched: 5, Changed: 5), update);
         foreach (string key in new[] { "fabric-loader-1.21.1", "same-folder", "slash-folder", "empty-folder", "null-folder" })
         {
             var profile = ReadProfile(ProfilesFile, key);
@@ -112,14 +112,14 @@ public class FabricJavaSettingsTests : IDisposable
         FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xms6G -Xmx6G");
 
         // The same arguments: the Java executable going away is a change in itself.
-        Assert.Equal(5, FabricService.ApplyJavaSettings(_mc, "1.21.1", null, "-Xms6G -Xmx6G"));
+        Assert.Equal(new ProfileJavaUpdate(5, 5), FabricService.ApplyJavaSettings(_mc, "1.21.1", null, "-Xms6G -Xmx6G"));
         var profile = ReadProfile(ProfilesFile, "fabric-loader-1.21.1");
         Assert.False(profile.TryGetProperty("javaDir", out _));
         Assert.Equal("-Xms6G -Xmx6G", Str(profile, "javaArgs"));
-        Assert.Equal(0, FabricService.ApplyJavaSettings(_mc, "1.21.1", null, "-Xms6G -Xmx6G"));
+        Assert.Equal(new ProfileJavaUpdate(5, 0), FabricService.ApplyJavaSettings(_mc, "1.21.1", null, "-Xms6G -Xmx6G"));
 
         // And the arguments keep following along without one.
-        Assert.Equal(5, FabricService.ApplyJavaSettings(_mc, "1.21.1", null, "-Xms4G -Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(5, 5), FabricService.ApplyJavaSettings(_mc, "1.21.1", null, "-Xms4G -Xmx4G"));
         Assert.Equal("-Xms4G -Xmx4G", Str(ReadProfile(ProfilesFile, "fabric-loader-1.21.1"), "javaArgs"));
         Assert.False(ReadProfile(ProfilesFile, "own-pack").TryGetProperty("javaArgs", out _));
     }
@@ -128,14 +128,15 @@ public class FabricJavaSettingsTests : IDisposable
     public void ApplyJavaSettings_WhenTheSettingsAreAlreadyThere_ChangesNothingAndDoesNotRewriteTheFile()
     {
         File.WriteAllText(ProfilesFile, SampleProfiles());
-        Assert.Equal(5, FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xms6G -Xmx6G"));
+        Assert.Equal(new ProfileJavaUpdate(5, 5), FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xms6G -Xmx6G"));
         string before = File.ReadAllText(ProfilesFile);
         var oldTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         File.SetLastWriteTimeUtc(ProfilesFile, oldTime);
 
-        int again = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xms6G -Xmx6G");
+        var again = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xms6G -Xmx6G");
 
-        Assert.Equal(0, again);
+        // The profiles are still found, they just need nothing: that is not the same as "no profile".
+        Assert.Equal(new ProfileJavaUpdate(Matched: 5, Changed: 0), again);
         Assert.Equal(before, File.ReadAllText(ProfilesFile));
         Assert.Equal(oldTime, File.GetLastWriteTimeUtc(ProfilesFile));
     }
@@ -147,9 +148,9 @@ public class FabricJavaSettingsTests : IDisposable
         File.WriteAllText(ProfilesFile, profiles);
         File.WriteAllText(StoreProfilesFile, profiles);
 
-        int changed = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G");
+        var update = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G");
 
-        Assert.Equal(2, changed);
+        Assert.Equal(new ProfileJavaUpdate(2, 2), update);
         Assert.Equal(Javaw, Str(ReadProfile(ProfilesFile, "f"), "javaDir"));
         Assert.Equal(Javaw, Str(ReadProfile(StoreProfilesFile, "f"), "javaDir"));
         Assert.Equal(new[] { ProfilesFile, StoreProfilesFile }.OrderBy(p => p), Directory.GetFiles(_mc).OrderBy(p => p));
@@ -161,9 +162,9 @@ public class FabricJavaSettingsTests : IDisposable
         File.WriteAllText(ProfilesFile, "{ this is not json");
         File.WriteAllText(StoreProfilesFile, """{ "profiles": { "f": { "lastVersionId": "fabric-loader-0.16.10-1.21.1" } } }""");
 
-        int changed = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G");
+        var update = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G");
 
-        Assert.Equal(1, changed);
+        Assert.Equal(new ProfileJavaUpdate(1, 1), update);
         Assert.Equal("{ this is not json", File.ReadAllText(ProfilesFile));
         Assert.Equal("-Xmx4G", Str(ReadProfile(StoreProfilesFile, "f"), "javaArgs"));
     }
@@ -177,14 +178,14 @@ public class FabricJavaSettingsTests : IDisposable
     {
         File.WriteAllText(ProfilesFile, json);
 
-        Assert.Equal(0, FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G"));
         Assert.Equal(json, File.ReadAllText(ProfilesFile));
     }
 
     [Fact]
     public void ApplyJavaSettings_WithoutProfileFiles_ChangesNothing()
     {
-        Assert.Equal(0, FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G"));
         Assert.Empty(Directory.GetFiles(_mc));
     }
 
@@ -198,7 +199,7 @@ public class FabricJavaSettingsTests : IDisposable
             }
             """);
 
-        Assert.Equal(1, FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(1, 1), FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G"));
     }
 
     [Fact]
@@ -212,14 +213,59 @@ public class FabricJavaSettingsTests : IDisposable
             """);
 
         // A prefix or a tail of the version is another version.
-        Assert.Equal(0, FabricService.ApplyJavaSettings(_mc, "1.21", Javaw, "-Xmx4G"));
-        Assert.Equal(0, FabricService.ApplyJavaSettings(_mc, "21.1", Javaw, "-Xmx4G"));
-        Assert.Equal(0, FabricService.ApplyJavaSettings(_mc, "26", Javaw, "-Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.ApplyJavaSettings(_mc, "1.21", Javaw, "-Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.ApplyJavaSettings(_mc, "21.1", Javaw, "-Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.ApplyJavaSettings(_mc, "26", Javaw, "-Xmx4G"));
 
         // A loader build with a dash in it does not confuse the game version.
-        Assert.Equal(1, FabricService.ApplyJavaSettings(_mc, "26.3", Javaw, "-Xmx4G"));
+        Assert.Equal(new ProfileJavaUpdate(1, 1), FabricService.ApplyJavaSettings(_mc, "26.3", Javaw, "-Xmx4G"));
         Assert.Null(Str(ReadProfile(ProfilesFile, "a"), "javaArgs"));
         Assert.Equal("-Xmx4G", Str(ReadProfile(ProfilesFile, "b"), "javaArgs"));
+    }
+
+    [Fact]
+    public void ApplyJavaSettings_ForAProfileOfAnotherPackOnly_FindsNoMatch()
+    {
+        string json = """
+            { "profiles": {
+                "own-pack": { "lastVersionId": "fabric-loader-0.16.10-1.21.1", "gameDir": "C:\\Packs\\Create" },
+                "vanilla": { "lastVersionId": "1.21.1" }
+            } }
+            """;
+        File.WriteAllText(ProfilesFile, json);
+
+        // Not a profile of this folder or not Fabric: the caller can tell "nothing to set it on" from "already set".
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G"));
+        Assert.Equal(json, File.ReadAllText(ProfilesFile));
+    }
+
+    [Fact]
+    public void ApplyJavaSettings_CountsMatchesOverBothFilesEvenWhenOnlyOneNeedsAChange()
+    {
+        string profiles = """{ "profiles": { "f": { "lastVersionId": "fabric-loader-0.16.10-1.21.1", "javaArgs": "-Xmx4G" } } }""";
+        File.WriteAllText(ProfilesFile, profiles);
+        File.WriteAllText(StoreProfilesFile, profiles.Replace("-Xmx4G", "-Xmx1G"));
+
+        Assert.Equal(new ProfileJavaUpdate(Matched: 2, Changed: 1), FabricService.ApplyJavaSettings(_mc, "1.21.1", null, "-Xmx4G"));
+    }
+
+    [Fact]
+    public void ApplyJavaSettings_WhenAFileCannotBeWritten_CountsItsProfilesForNeither()
+    {
+        string json = """{ "profiles": { "f": { "lastVersionId": "fabric-loader-0.16.10-1.21.1" } } }""";
+        File.WriteAllText(ProfilesFile, json);
+
+        // Readable but neither replaceable nor renamable, which is how another program holding the file looks.
+        using (new FileStream(ProfilesFile, FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            var update = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G");
+
+            // Counting it as matched would let the caller call the Java "set up" while the file is still as it was.
+            Assert.Equal(new ProfileJavaUpdate(0, 0), update);
+        }
+
+        Assert.Equal(json, File.ReadAllText(ProfilesFile));
+        Assert.Equal(new[] { ProfilesFile }, Directory.GetFiles(_mc));
     }
 
     private string RuntimesRoot => Path.Combine(_mc, "runtimes");

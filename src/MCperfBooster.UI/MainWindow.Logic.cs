@@ -26,6 +26,12 @@ internal sealed partial class MainWindow
     // Longest list a result dialog shows per section before summarising the rest.
     private const int MaxListedPerSection = 10;
 
+    // The Advanced menu reports mods by slug; this is the one row that is no mod. A slug never starts with '@'.
+    private const string GraalVmMenuKey = "@graalvm";
+
+    // With this mod on, the injection asks for the larger heap Distant Horizons needs.
+    private const string DistantHorizonsSlug = "distanthorizons";
+
     // The shared client's 10-minute timeout is sized for mod downloads; the preset list
     // is a few KB, so a stalled request must not hold a refresh up for that long.
     private static readonly TimeSpan PresetFetchTimeout = TimeSpan.FromSeconds(15);
@@ -36,6 +42,8 @@ internal sealed partial class MainWindow
     private readonly IModrinthService _modrinthService;
     private readonly IModManagerService _modManagerService;
     private readonly IUpdateService _updateService;
+    private readonly IGraalVmService _graalVm;
+    private readonly JavaSetupService _javaSetup;
 
     private AppSettings _settings = new();
 
@@ -116,6 +124,8 @@ internal sealed partial class MainWindow
         _fabricService = new FabricService(_httpClient);
         _modrinthService = new ModrinthService(_httpClient);
         _modManagerService = new ModManagerService(_modrinthService);
+        _graalVm = new GraalVmService(_httpClient);
+        _javaSetup = new JavaSetupService(_graalVm);
     }
 
     // ---- Command routing -------------------------------------------------
@@ -144,18 +154,34 @@ internal sealed partial class MainWindow
 
         // Before the first scan nothing is known about the mods folder yet; the settings
         // and the pack's defaults decide then.
-        _advancedMenu.SetOptions(ModPresets.GetOptionalMods()
+        var options = ModPresets.GetOptionalMods()
             .Select(m => new AdvancedMenu.Option(m.Slug, m.Name,
                 _optionalModStates.TryGetValue(m.Slug, out bool on) ? on : _settings.IsOptionalModEnabled(m, presentInModsFolder: false)))
-            .ToList());
+            .ToList();
+
+        // After the mods and under a header of its own: GraalVM is no mod and has nothing to do with the mods folder.
+        options.Add(new AdvancedMenu.Option(GraalVmMenuKey, "Use GraalVM", _settings.UseGraalVm, section: "JAVA"));
+
+        _advancedMenu.SetOptions(options);
         Native.GetWindowRect(_btnAdvanced.Hwnd, out var rect);
         _advancedMenu.Toggle(_hwnd, rect);
     }
 
-    private void OnModToggled(string slug, bool isEnabled)
+    private void OnModToggled(string key, bool isEnabled)
     {
-        _settings.SetOptionalModEnabled(slug, isEnabled);
-        _optionalModStates[slug] = isEnabled;
+        if (key == GraalVmMenuKey)
+        {
+            // Only the setting changes, and nothing is rescanned: the next injection carries the switch out.
+            _settings.UseGraalVm = isEnabled;
+            _settings.Save();
+            SetSubStatus(isEnabled
+                ? "GraalVM will be set up on the next injection."
+                : "The next injection switches Minecraft back to the launcher's own Java and removes GraalVM.");
+            return;
+        }
+
+        _settings.SetOptionalModEnabled(key, isEnabled);
+        _optionalModStates[key] = isEnabled;
 
         // Persisted right away: Inject reads these, and a restart must not quietly
         // bring back a mod the user switched off. Save() swallows I/O errors itself.
@@ -325,6 +351,46 @@ internal sealed partial class MainWindow
             Native.MB_YESNO | Native.MB_ICONWARNING | Native.MB_DEFBUTTON2);
 
         return answer == Native.IDYES;
+    }
+
+    /// <summary>
+    /// Asks once, before the first GraalVM download, whether that is wanted: it is a large download from
+    /// Oracle under a license of its own. Yes is remembered for good; No switches GraalVM off, and the
+    /// injection goes on without it (Advanced > Use GraalVM turns it back on). Like the launcher check this
+    /// runs before the action turns busy, so the caller has to look at the busy flag again afterwards.
+    /// </summary>
+    /// <remarks>
+    /// Called on the UI thread on purpose, for the same reason as <see cref="ConfirmLauncherClosed"/>: the
+    /// two small file reads are quicker than the window a second click could use.
+    /// </remarks>
+    private void AskForGraalVmConsent(string mcVersion)
+    {
+        if (!_settings.UseGraalVm || _settings.GraalVmConsentGiven) return;
+
+        // Nothing to ask about for a game that gets no GraalVM, or when the runtime is on the disk already.
+        if (JavaRuntimeCatalog.GetJavaMajor(mcVersion, _minecraftPath) is not int javaMajor ||
+            _graalVm.GetInstalled(javaMajor) != null ||
+            JavaRuntimeCatalog.GetBuild(javaMajor) is not { } build)
+        {
+            return;
+        }
+
+        int answer = Native.MessageBoxW(_hwnd,
+            $"MCperfBooster runs Minecraft {mcVersion} on Oracle GraalVM for Java {javaMajor}, a Java with a faster optimizing compiler.\n\n" +
+            $"It is downloaded once from oracle.com (about {build.ApproximateDownloadMegabytes} MB, about 300 MB on disk) " +
+            "and is free to use under the GraalVM Free Terms and Conditions:\n" +
+            "https://www.oracle.com/downloads/licenses/graal-free-license.html\n\n" +
+            "Download GraalVM now? If you choose No, Minecraft keeps the launcher's own Java. " +
+            "You can change this any time under Advanced > Use GraalVM.",
+            "Download GraalVM?",
+            Native.MB_YESNO | Native.MB_ICONQUESTION);
+
+        if (answer == Native.IDYES)
+            _settings.GraalVmConsentGiven = true;
+        else
+            _settings.UseGraalVm = false;
+
+        _settings.Save();
     }
 
     /// <summary>
@@ -656,6 +722,10 @@ internal sealed partial class MainWindow
         // The dialog's modal loop keeps running queued work; re-check before turning busy.
         if (!ConfirmLauncherClosed() || _isBusy) return;
 
+        // Same for this question. Declining does not stop the injection, only the GraalVM part of it.
+        AskForGraalVmConsent(selectedVersion);
+        if (_isBusy) return;
+
         SetBusy(true, "Preparing performance injection...");
         ShowProgress(true, 0);
 
@@ -707,10 +777,13 @@ internal sealed partial class MainWindow
 
             // What is on disk now decides what the summary claims, not what was attempted.
             var fabricAfter = await RecheckFabricAsync(selectedVersion);
+
+            // Last, because the Java settings go into the Fabric profile, which the check above may have just created.
+            var java = await SetUpJavaAsync(minecraftPath, selectedVersion, fabricAfter, injectedMods);
             await RefreshAfterActionAsync(selectedVersion);
             SetProgress(100);
 
-            ShowReport(BuildInjectionReport(selectedVersion, result, fabricAfter, fabricInstallFailed));
+            ShowReport(BuildInjectionReport(selectedVersion, result, fabricAfter, fabricInstallFailed, java));
         }
         catch (Exception ex)
         {
@@ -724,6 +797,71 @@ internal sealed partial class MainWindow
             SetBusy(false);
             ShowProgress(false);
         }
+    }
+
+    /// <summary>
+    /// Puts the game on its Java once the mods and Fabric are in place: downloads GraalVM when it is wanted and
+    /// missing, and writes the Java settings into the Fabric profiles. Core reports its failures in the outcome;
+    /// the guard below is for anything beyond that, since the mods are installed by now and the injection must
+    /// not turn into a reported failure because of Java.
+    /// </summary>
+    private async Task<JavaSetupOutcome> SetUpJavaAsync(
+        string minecraftPath, string mcVersion, FabricStatus? fabric, IEnumerable<ModDefinition> injectedMods)
+    {
+        // The settings live in the Fabric profile, so there is nothing to set them on without Fabric.
+        if (fabric is not { IsInstalled: true })
+            return new JavaSetupOutcome("unchanged (Fabric is not installed)", null, null);
+
+        bool useGraalVm = _settings.UseGraalVm;
+        bool distantHorizons = injectedMods.Any(m => string.Equals(m.Slug, DistantHorizonsSlug, StringComparison.OrdinalIgnoreCase));
+
+        SetStatus("Setting up Java...");
+
+        try
+        {
+            // Only for the progress texts; Core works the version out again by itself. Reads the version json.
+            int? javaMajor = await Task.Run(() => JavaRuntimeCatalog.GetJavaMajor(mcVersion, minecraftPath));
+
+            // Created here and not earlier: the injection's own reports were stopped above, and a progress
+            // made before that would have its reports dropped.
+            var progress = LiveProgress<RuntimeDownloadProgress>(report => ShowJavaSetupProgress(report, javaMajor));
+
+            // Core resumes on whatever context it was started on; the pool keeps its file and process work off the message loop.
+            return await Task.Run(() => _javaSetup.SetUpAsync(minecraftPath, mcVersion, useGraalVm, distantHorizons, progress));
+        }
+        catch (Exception ex)
+        {
+            return new JavaSetupOutcome("could not be set up", $"Setting up Java failed: {ex.Message}", null);
+        }
+        finally
+        {
+            StopProgressReports();
+        }
+    }
+
+    /// <summary>
+    /// Shows how far the download or the unpacking is, in the details line and in the bar (each phase fills
+    /// it once). A download of unknown size has nothing to set the bar by, so it stays where it is.
+    /// </summary>
+    private void ShowJavaSetupProgress(RuntimeDownloadProgress report, int? javaMajor)
+    {
+        const long Megabyte = 1024 * 1024;
+        string forJava = javaMajor is { } major ? $" for Java {major}" : string.Empty;
+        bool sizeKnown = report.TotalBytes > 0;
+        double percent = sizeKnown ? Math.Clamp(100.0 * report.BytesDone / report.TotalBytes, 0, 100) : 0;
+
+        if (report.Phase == RuntimeInstallPhase.Downloading)
+        {
+            SetSubStatus(sizeKnown
+                ? $"Downloading GraalVM{forJava}: {report.BytesDone / Megabyte} / {report.TotalBytes / Megabyte} MB"
+                : $"Downloading GraalVM{forJava}: {report.BytesDone / Megabyte} MB");
+        }
+        else
+        {
+            SetSubStatus($"Unpacking GraalVM{forJava}: {(int)percent}%");
+        }
+
+        if (sizeKnown) SetProgress(percent);
     }
 
     /// <summary>The outcome of an action: the status lines it leaves behind and the dialog it shows.</summary>
@@ -740,17 +878,18 @@ internal sealed partial class MainWindow
     /// <summary>
     /// Turns an injection's outcome into the final status and dialog. It only claims
     /// that everything is configured when nothing failed, was skipped or warned about,
-    /// Fabric was found on disk afterwards and a launcher profile can start it; it only
-    /// names a profile the Fabric check reported. A mod with no build for this Minecraft
-    /// version yet is not a problem but a note: it is installed once one is published,
-    /// and its old jar being disabled belongs to that.
+    /// Java was set up without a problem, Fabric was found on disk afterwards and a
+    /// launcher profile can start it; it only names a profile the Fabric check reported.
+    /// A mod with no build for this Minecraft version yet is not a problem but a note: it
+    /// is installed once one is published, and its old jar being disabled belongs to that.
+    /// A note about Java is no problem either.
     /// </summary>
     private static ActionReport BuildInjectionReport(
-        string mcVersion, ModInstallResult result, FabricStatus? fabric, bool fabricInstallFailed)
+        string mcVersion, ModInstallResult result, FabricStatus? fabric, bool fabricInstallFailed, JavaSetupOutcome java)
     {
         bool fabricReady = fabric is { IsInstalled: true };
         bool hasProfile = fabricReady && fabric!.ProfileName != null;
-        bool hasProblems = result.FailedCount > 0 || result.Skipped.Count > 0 || result.Warnings.Count > 0;
+        bool hasProblems = result.FailedCount > 0 || result.Skipped.Count > 0 || result.Warnings.Count > 0 || java.Problem != null;
         bool complete = hasProfile && !hasProblems;
 
         int availableCount = result.TotalCount - result.UnavailableModNames.Count;
@@ -784,6 +923,7 @@ internal sealed partial class MainWindow
         text.Append(!fabricReady ? "• Fabric Loader: not installed\n"
             : hasProfile ? $"• Fabric Loader: v{fabric!.InstalledLoaderVersion}\n"
             : $"• Fabric Loader: v{fabric!.InstalledLoaderVersion} (no launcher profile)\n");
+        text.Append($"• Java: {java.Summary}\n");
 
         AppendSection(text, "Could not be installed:",
             result.Failures.Select(f => $"{f.ModName} ({f.Reason})"));
@@ -794,6 +934,8 @@ internal sealed partial class MainWindow
         AppendSection(text, "Incompatible jars disabled (renamed to .jar.disabled so the game can start):",
             result.DisabledFileNames);
         AppendSection(text, "Warnings:", result.Warnings);
+        AppendSection(text, "Java:", OptionalLine(java.Problem));
+        AppendSection(text, "Java note:", OptionalLine(java.Note));
 
         text.Append('\n');
         if (fabricReady)
@@ -826,7 +968,7 @@ internal sealed partial class MainWindow
 
         // Disabled jars always belong to a mod that was not updated in this run, so they
         // are listed but not counted a second time; missing builds are notes, not issues.
-        int issueCount = result.FailedCount + result.Skipped.Count + result.Warnings.Count;
+        int issueCount = result.FailedCount + result.Skipped.Count + result.Warnings.Count + (java.Problem != null ? 1 : 0);
 
         string status = !fabricReady ? "Injection finished - Fabric missing"
             : issueCount > 0 ? $"Injection completed with {issueCount} issue(s)"
@@ -839,6 +981,8 @@ internal sealed partial class MainWindow
 
         return new ActionReport(status, subStatus, "Injection Finished with Warnings", text.ToString(), IsWarning: true);
     }
+
+    private static IEnumerable<string> OptionalLine(string? line) => line == null ? Array.Empty<string>() : new[] { line };
 
     /// <summary>
     /// Appends a titled bullet list, or nothing when it is empty. Long lists are cut so
