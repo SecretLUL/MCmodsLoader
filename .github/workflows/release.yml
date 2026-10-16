@@ -153,8 +153,8 @@ jobs:
           $installer = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer"
           if (Test-Path $installer) { $env:PATH = "$installer;$env:PATH" }
 
-          Write-Host "Publishing MCmodsLoader $env:VERSION as a native binary..."
-          dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
+          Write-Host "Publishing MCperfBooster $env:VERSION as a native binary..."
+          dotnet publish src/MCperfBooster.UI/MCperfBooster.UI.csproj `
             -c Release `
             -r win-x64 `
             "-p:Version=$env:VERSION" `
@@ -164,7 +164,7 @@ jobs:
             -o publish
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
-          $exe = Get-Item publish/MCmodsLoader.exe
+          $exe = Get-Item publish/MCperfBooster.exe
           Write-Host "Produced $($exe.Name): $([math]::Round($exe.Length / 1MB, 2)) MB"
 
       # The self-updater compares the version this executable reports with the
@@ -173,12 +173,12 @@ jobs:
       - name: Verify the Executable Reports the Released Version
         shell: pwsh
         run: |
-          $info = (Get-Item publish/MCmodsLoader.exe).VersionInfo
+          $info = (Get-Item publish/MCperfBooster.exe).VersionInfo
           $product = ($info.ProductVersion -split '\+')[0]
           $file = "$($info.FileMajorPart).$($info.FileMinorPart).$($info.FileBuildPart)"
           Write-Host "ProductVersion $($info.ProductVersion), FileVersion $($info.FileVersion)"
           if ($product -ne $env:VERSION -or $file -ne $env:NUMERIC) {
-            throw "MCmodsLoader.exe calls itself $($info.ProductVersion) (file $file), but this is release $env:VERSION. Refusing to publish it."
+            throw "MCperfBooster.exe calls itself $($info.ProductVersion) (file $file), but this is release $env:VERSION. Refusing to publish it."
           }
 
       # Kept with the run as well: after a rehearsal, this is what can be
@@ -186,8 +186,8 @@ jobs:
       - name: Upload the Executable
         uses: actions/upload-artifact@v4
         with:
-          name: MCmodsLoader-${{ needs.version.outputs.tag }}
-          path: publish/MCmodsLoader.exe
+          name: MCperfBooster-${{ needs.version.outputs.tag }}
+          path: publish/MCperfBooster.exe
           if-no-files-found: error
 
   publish:
@@ -208,7 +208,7 @@ jobs:
       - name: Download the Executable
         uses: actions/download-artifact@v4
         with:
-          name: MCmodsLoader-${{ needs.version.outputs.tag }}
+          name: MCperfBooster-${{ needs.version.outputs.tag }}
           path: publish/
 
       # Set on the commit that was built, not left to the release step, which would
@@ -226,7 +226,7 @@ jobs:
           fi
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git tag -a "$TAG" -m "MCmodsLoader $TAG" "$GITHUB_SHA"
+          git tag -a "$TAG" -m "MCperfBooster $TAG" "$GITHUB_SHA"
           git push origin "refs/tags/$TAG"
 
       # Hand-written notes can be put at docs/release-notes/<tag>.md before the
@@ -253,7 +253,7 @@ jobs:
           prerelease: ${{ contains(env.TAG, '-') }}
           body_path: ${{ steps.notes.outputs.body_path }}
           generate_release_notes: true
-          files: publish/MCmodsLoader.exe
+          files: publish/MCperfBooster.exe
           fail_on_unmatched_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

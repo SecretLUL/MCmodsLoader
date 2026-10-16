@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="500" viewBox="0 0 1500 500" role="img" aria-labelledby="banner-title banner-desc">
+  <title id="banner-title">MCperfBooster</title>
+  <desc id="banner-desc">MCperfBooster: Minecraft. Faster. Simpler. Fabric, performance mods and GraalVM for the official Minecraft Launcher.</desc>
+  <defs>
+    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#10B981" stop-opacity="0.30"/>
+      <stop offset="0.55" stop-color="#10B981" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#10B981" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="gridFade" cx="0.2" cy="0.5" r="0.75">
+      <stop offset="0" stop-color="#FFFFFF" stop-opacity="1"/>
+      <stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid" width="36" height="36" patternUnits="userSpaceOnUse">
+      <path d="M36 0H0V36" fill="none" stroke="#1E293B" stroke-width="1.5"/>
+    </pattern>
+    <mask id="gridMask">
+      <rect width="1500" height="500" fill="url(#gridFade)"/>
+    </mask>
+    <clipPath id="frame">
+      <rect width="1500" height="500" rx="24"/>
+    </clipPath>
+  </defs>
+
+  <g clip-path="url(#frame)">
+    <rect width="1500" height="500" fill="#0F172A"/>
+    <rect width="1500" height="500" fill="url(#grid)" mask="url(#gridMask)"/>
+    <circle cx="275" cy="250" r="290" fill="url(#glow)"/>
+  </g>
+
+  <!-- The app logo, traced from logo.png: three cube faces and the lightning bolt. -->
+  <g transform="translate(65.5 37.6) scale(0.3343)" stroke-linejoin="round" stroke-width="3">
+    <polygon points="134,339 627,576 627,1185 133,937" fill="#0EB680" stroke="#0EB680"/>
+    <polygon points="627,576 1120,339 1120,937 627,1185" fill="#058F68" stroke="#058F68"/>
+    <polygon points="626,85 1120,339 627,576 134,339" fill="#3BD298" stroke="#3BD298"/>
+    <polygon points="402,524 543,588 438,717 543,766 289,994 368,801 281,759" fill="#FCFCFC"/>
+  </g>
+
+  <g font-family="'Segoe UI Variable Display','Segoe UI',system-ui,-apple-system,'Helvetica Neue',Arial,sans-serif">
+    <text x="518" y="226" font-size="104" font-weight="700" letter-spacing="-1.5" fill="#F8FAFC">MC<tspan fill="#34D399">perf</tspan>Booster</text>
+    <text x="522" y="290" font-size="38" font-weight="400" fill="#B6C2D4">Minecraft. Faster. Simpler.</text>
+
+    <g font-size="21" font-weight="600" text-anchor="middle" fill="#A7F3D0">
+      <rect x="522" y="324" width="112" height="40" rx="20" fill="#0B3B2E" stroke="#065F46" stroke-width="1.5"/>
+      <text x="578" y="351">Fabric</text>
+      <rect x="648" y="324" width="232" height="40" rx="20" fill="#0B3B2E" stroke="#065F46" stroke-width="1.5"/>
+      <text x="764" y="351">Performance mods</text>
+      <rect x="894" y="324" width="132" height="40" rx="20" fill="#0B3B2E" stroke="#065F46" stroke-width="1.5"/>
+      <text x="960" y="351">GraalVM</text>
+    </g>
+  </g>
+</svg>
