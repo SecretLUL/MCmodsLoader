@@ -114,8 +114,8 @@ public sealed class JavaSetupService
     /// <summary>
     /// Takes every profile off the downloaded runtimes, onto the launcher's own Java with arguments for its game
     /// version, and only then deletes the runtimes and the graphics card they were given. Returns a problem when a
-    /// profile file could not be changed: GraalVM then stays, card and all, since a profile may still point at it,
-    /// and deleting it would leave that profile with a Java that is gone.
+    /// profile file could not be changed while GraalVM is on the disk: GraalVM then stays, card and all, since a
+    /// profile may still point at it, and deleting it would leave that profile with a Java that is gone.
     /// </summary>
     private string? RemoveGraalVm(string minecraftPath, SystemProfile system, bool distantHorizons)
     {

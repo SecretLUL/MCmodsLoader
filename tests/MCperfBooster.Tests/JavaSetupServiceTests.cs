@@ -1042,6 +1042,9 @@ public class JavaSetupServiceTests : IDisposable
 
         JavaSetupOutcome outcome = await SetUp(useGraalVm: false);
 
+        // The way through a profile file that could not be changed, not the usual removal.
+        Assert.DoesNotContain("remove-all", _graalVm.Calls);
+        Assert.StartsWith("One launcher profile file could not be read or written", outcome.Note);
         Assert.Null(outcome.Problem);
         Assert.False(_gpu.Settings.ContainsKey(runtime.JavawExe));
         Assert.False(File.Exists(GpuRecord));

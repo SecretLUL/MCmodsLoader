@@ -109,9 +109,9 @@ public sealed class GpuPreferenceService
         if (current != null && (!IsReadable(current) || HasGraphicsCardPart(current)))
             return null;
 
-        // The game ran on the first one's card until now; a card from further down would be forced on it.
-        string? launcherSetting = launcherExes.Select(_store.Get)
-            .FirstOrDefault(setting => setting != null && IsReadable(setting) && HasGraphicsCardPart(setting));
+        // The game ran on the first one's card until now; a card from further down would be forced on it. A setting
+        // that does not read like one still decides, and gives no card to copy.
+        string? launcherSetting = launcherExes.Select(_store.Get).FirstOrDefault(setting => setting != null && HasGraphicsCardPart(setting));
         string? choice = GraphicsCardChoice(launcherSetting);
         if (choice == null)
             return null;

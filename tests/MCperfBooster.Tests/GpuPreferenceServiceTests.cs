@@ -121,6 +121,9 @@ public class GpuPreferenceServiceTests : IDisposable
     [InlineData("GpuPreference=;")]
     [InlineData("GpuPreference=fast;")]
     [InlineData("SpecificAdapter=10DE&2520&0A6F1028;")]
+    // Damaged by hand: a card setting all the same, but not one to copy.
+    [InlineData("GpuPreference=0;broken")]
+    [InlineData("GpuPreference=2;broken")]
     public void CarryOver_StopsAtALauncherJavaThatLeavesTheCardToWindows(string setting)
     {
         // The first Java with a card setting decides: the game ran on "let Windows decide" until now, and so it stays.
