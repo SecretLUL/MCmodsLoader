@@ -1,6 +1,6 @@
-![MCmodsLoader – Minecraft. Faster. Simpler.](src/MCmodsLoader.UI/Assets/readme-banner.png)
+![MCperfBooster – Minecraft. Faster. Simpler.](src/MCperfBooster.UI/Assets/readme-banner.png)
 
-# MCmodsLoader
+# MCperfBooster
 
 > **Zero-Setup Performance Injector for the Vanilla Launcher**
 
@@ -9,13 +9,13 @@
 [![.NET 8](https://img.shields.io/badge/.NET-8.0-512BD4.svg)](https://dotnet.microsoft.com/)
 [![Built for Fabric](https://img.shields.io/badge/Fabric-ModLoader-D97706.svg)](https://fabricmc.net/)
 
-**MCmodsLoader** is a lightweight, zero-configuration utility designed for friends and casual players who want buttery-smooth Minecraft FPS without needing to learn modding, install third-party launchers, or fiddle with `.minecraft` directories.
+**MCperfBooster** is a lightweight, zero-configuration utility designed for friends and casual players who want buttery-smooth Minecraft FPS without needing to learn modding, install third-party launchers, or fiddle with `.minecraft` directories.
 
 With a single click, it sets up the **Fabric Loader** and injects an essential suite of **top-tier performance and quality-of-life mods** directly into the official vanilla Minecraft launcher.
 
 ---
 
-## 🎯 Why MCmodsLoader?
+## 🎯 Why MCperfBooster?
 
 * **No Extra Launchers:** Your friends keep using the standard official Minecraft Launcher they already know and trust.
 * **Zero Configuration:** Automatically locates `.minecraft`, determines compatible mod versions, and registers launcher profiles.
@@ -28,7 +28,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 
 ## 🚀 Quick Start Guide
 
-1. **Download** the latest `MCmodsLoader.exe` from [GitHub Releases](https://github.com/SecretLUL/MCmodsLoader/releases).
+1. **Download** the latest `MCperfBooster.exe` from [GitHub Releases](https://github.com/SecretLUL/MCperfBooster/releases).
 2. **Launch** the program (no installation required).
 3. **Select your Minecraft version** (e.g. `1.21.4`, `1.21.1`, etc.).
 4. Click **`Inject Performance Mods`**.
@@ -38,7 +38,7 @@ With a single click, it sets up the **Fabric Loader** and injects an essential s
 
 ## 📦 Curated Modpack
 
-MCmodsLoader installs 21 mandatory mods and offers 3 optional ones.
+MCperfBooster installs 21 mandatory mods and offers 3 optional ones.
 
 ### Mandatory mods
 
@@ -83,13 +83,13 @@ Switched on or off under **Advanced** in the app; the choice is remembered. A mo
 ## 🛠️ Architecture & Tech Stack
 
 * **Frontend:** A dark-mode UI drawn directly on Win32 (GDI), compiled ahead of time with **NativeAOT**. WPF was dropped because it cannot be trimmed, which forced a ~68 MB self-contained download; the AOT binary is ~6 MB and needs no .NET runtime installed.
-* **Core Engine:** `MCmodsLoader.Core`
+* **Core Engine:** `MCperfBooster.Core`
   * `FabricService`: Probes local `launcher_profiles.json` and versions directory; runs the official Fabric CLI installer if Java is present, or falls back to direct Meta profile JSON registration.
   * `MinecraftService`: Automatically resolves `%APPDATA%\.minecraft`, detects installed versions, and retrieves game version manifests.
   * `ModrinthService`: Asynchronous HTTP client targeting the Modrinth v2 REST API to locate primary Fabric-compatible jar releases.
   * `ModManagerService`: Inspects existing mods (reads internal `fabric.mod.json`), removes obsolete jars, and downloads updates.
-  * `UpdateService`: Checks GitHub REST API for new releases, verifies the downloaded executable (PE header and the release asset's SHA-256 digest), and swaps it in by renaming the running executable to `MCmodsLoader.old.exe`, which the new build deletes on startup.
-* **Testing:** xUnit test suite (`MCmodsLoader.Tests`) covering version parsing, zip metadata inspection, mod presets, and directory validation.
+  * `UpdateService`: Checks GitHub REST API for new releases, verifies the downloaded executable (PE header and the release asset's SHA-256 digest), and swaps it in by renaming the running executable to `MCperfBooster.old.exe`, which the new build deletes on startup.
+* **Testing:** xUnit test suite (`MCperfBooster.Tests`) covering version parsing, zip metadata inspection, mod presets, and directory validation.
 
 ---
 
@@ -105,8 +105,8 @@ Switched on or off under **Advanced** in the app; the choice is remembered. A mo
 ### Clone & Build
 ```powershell
 # Clone repository
-git clone https://github.com/SecretLUL/MCmodsLoader.git
-cd MCmodsLoader
+git clone https://github.com/SecretLUL/MCperfBooster.git
+cd MCperfBooster
 
 # Run automated tests
 dotnet test
@@ -125,13 +125,13 @@ To produce the standalone portable `.exe` for distribution:
 # and vswhere is not on PATH by default.
 $env:PATH = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer;$env:PATH"
 
-dotnet publish src/MCmodsLoader.UI/MCmodsLoader.UI.csproj `
+dotnet publish src/MCperfBooster.UI/MCperfBooster.UI.csproj `
   -c Release `
   -r win-x64 `
   -o ./publish
 ```
 `PublishAot` is set in the project file for any build with a runtime identifier, so no
-extra flags are needed. The output `./publish/MCmodsLoader.exe` is around 6 MB, runs on
+extra flags are needed. The output `./publish/MCperfBooster.exe` is around 6 MB, runs on
 a machine with no .NET installed, and is the only file the release ships.
 
 ### Releasing
@@ -152,4 +152,4 @@ Issues and pull requests are welcome! If you find a bug or have a suggestion for
 
 ## 📄 License
 
-This project is licensed under the [MIT License](LICENSE). Minecraft is a trademark of Mojang AB / Microsoft. MCmodsLoader is an independent open-source project and is not affiliated with Mojang or Microsoft.
+This project is licensed under the [MIT License](LICENSE). Minecraft is a trademark of Mojang AB / Microsoft. MCperfBooster is an independent open-source project and is not affiliated with Mojang or Microsoft.
