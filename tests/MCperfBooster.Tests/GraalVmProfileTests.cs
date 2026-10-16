@@ -164,7 +164,8 @@ public class FabricJavaSettingsTests : IDisposable
 
         var update = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G");
 
-        Assert.Equal(new ProfileJavaUpdate(1, 1), update);
+        Assert.Equal((1, 1), (update.Matched, update.Changed));
+        Assert.StartsWith("launcher_profiles.json: ", update.Error);
         Assert.Equal("{ this is not json", File.ReadAllText(ProfilesFile));
         Assert.Equal("-Xmx4G", Str(ReadProfile(StoreProfilesFile, "f"), "javaArgs"));
     }
@@ -260,8 +261,10 @@ public class FabricJavaSettingsTests : IDisposable
         {
             var update = FabricService.ApplyJavaSettings(_mc, "1.21.1", Javaw, "-Xmx4G");
 
-            // Counting it as matched would let the caller call the Java "set up" while the file is still as it was.
-            Assert.Equal(new ProfileJavaUpdate(0, 0), update);
+            // Counting it as matched would let the caller call the Java "set up" while the file is still as it was;
+            // the error tells the caller which file it was instead.
+            Assert.Equal((0, 0), (update.Matched, update.Changed));
+            Assert.StartsWith("launcher_profiles.json: ", update.Error);
         }
 
         Assert.Equal(json, File.ReadAllText(ProfilesFile));
@@ -296,7 +299,7 @@ public class FabricJavaSettingsTests : IDisposable
             "1.21.1" => "hotspot-21",
             "26.3" => "hotspot-25",
             _ => null,
-        });
+        }).Changed;
 
         Assert.Equal(4, changed);
         // Detached, with the arguments of their game version.
@@ -348,7 +351,7 @@ public class FabricJavaSettingsTests : IDisposable
         File.WriteAllText(ProfilesFile, profiles);
         File.WriteAllText(StoreProfilesFile, profiles);
 
-        int changed = FabricService.DetachRuntimes(_mc, RuntimesRoot, _ => "hotspot");
+        int changed = FabricService.DetachRuntimes(_mc, RuntimesRoot, _ => "hotspot").Changed;
 
         Assert.Equal(2, changed);
         foreach (string file in new[] { ProfilesFile, StoreProfilesFile })
@@ -358,13 +361,13 @@ public class FabricJavaSettingsTests : IDisposable
             Assert.False(ReadProfile(file, "b").TryGetProperty("javaArgs", out _));
         }
 
-        Assert.Equal(0, FabricService.DetachRuntimes(_mc, RuntimesRoot, _ => "hotspot"));
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.DetachRuntimes(_mc, RuntimesRoot, _ => "hotspot"));
     }
 
     [Fact]
     public void DetachRuntimes_WithoutProfileFiles_ChangesNothing()
     {
-        Assert.Equal(0, FabricService.DetachRuntimes(_mc, RuntimesRoot, _ => "hotspot"));
+        Assert.Equal(new ProfileJavaUpdate(0, 0), FabricService.DetachRuntimes(_mc, RuntimesRoot, _ => "hotspot"));
         Assert.Empty(Directory.GetFiles(_mc));
     }
 
@@ -403,16 +406,68 @@ public class FabricJavaSettingsTests : IDisposable
     }
 
     [Theory]
-    [InlineData("1.16.5", 17)]
+    // A new profile starts on the launcher's own Java: 8 for 1.16.5 and 16 for 1.17, which only get memory and G1.
+    [InlineData("1.16.5", 8)]
+    [InlineData("1.17.1", 16)]
+    [InlineData("1.18", 17)]
     [InlineData("1.20.4", 17)]
     [InlineData("1.20.5", 21)]
     [InlineData("1.21.11", 21)]
     [InlineData("26.1", 25)]
-    public void RegisterProfileInLauncher_PicksTheArgumentsOfTheGamesJava(string mcVersion, int javaMajor)
+    public void RegisterProfileInLauncher_PicksTheArgumentsOfTheLaunchersJava(string mcVersion, int javaMajor)
     {
         var system = new SystemProfile(16 * Gib, 16);
 
         Assert.Equal(JvmArguments.Build(javaMajor, graalVm: false, system, distantHorizons: false), NewProfileJavaArgs(mcVersion, system));
+    }
+
+    [Fact]
+    public void RegisterProfileInLauncher_For1_16_5_LeavesOutWhatJava8Refuses()
+    {
+        string args = NewProfileJavaArgs("1.16.5", new SystemProfile(32 * Gib, 16));
+
+        Assert.Equal("-Xms6G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=37 -XX:+DisableExplicitGC", args);
+    }
+
+    [Fact]
+    public void ApplyJavaSettings_WithAReadOnlyProfileFile_NamesItInsteadOfFindingNoProfile()
+    {
+        File.WriteAllText(ProfilesFile, """{ "profiles": { "a": { "lastVersionId": "fabric-loader-0.16.10-1.21.1" } } }""");
+        File.SetAttributes(ProfilesFile, FileAttributes.ReadOnly);
+        try
+        {
+            ProfileJavaUpdate update = FabricService.ApplyJavaSettings(_mc, "1.21.1", @"C:\x\javaw.exe", "-Xmx2G");
+
+            Assert.Equal(0, update.Matched);
+            Assert.Equal(0, update.Changed);
+            Assert.StartsWith("launcher_profiles.json: ", update.Error);
+        }
+        finally
+        {
+            File.SetAttributes(ProfilesFile, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public void DetachRuntimes_WithAReadOnlyProfileFile_ReportsItAndLeavesTheProfileAsItWas()
+    {
+        string javaw = Path.Combine(RuntimesRoot, "graalvm-21", "bin", "javaw.exe");
+        File.WriteAllText(ProfilesFile, $$"""
+            { "profiles": { "a": { "lastVersionId": "fabric-loader-0.16.10-1.21.1", "javaDir": "{{Esc(javaw)}}" } } }
+            """);
+        File.SetAttributes(ProfilesFile, FileAttributes.ReadOnly);
+        try
+        {
+            ProfileJavaUpdate update = FabricService.DetachRuntimes(_mc, RuntimesRoot, _ => "hotspot");
+
+            Assert.Equal(0, update.Changed);
+            Assert.NotNull(update.Error);
+            Assert.Equal(javaw, Str(ReadProfile(ProfilesFile, "a"), "javaDir"));
+        }
+        finally
+        {
+            File.SetAttributes(ProfilesFile, FileAttributes.Normal);
+        }
     }
 
     [Theory]

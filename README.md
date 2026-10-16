@@ -65,7 +65,7 @@ Versions older than 1.16.5 keep the launcher's own Java. For a future Minecraft 
 | 12 – 24 GB | 4 GB, reserved up front | 6 GB |
 | 24 GB and more | 6 GB, reserved up front | 8 GB |
 
-On top of that come G1 garbage collector settings tuned for short pauses (fewer stutters), a larger code cache on PCs with 12 GB or more, earlier background collection on processors with 8 or more threads, and deeper GraalVM inlining on processors with 12 or more threads. Before anything is saved, MCperfBooster starts the chosen Java once with exactly these arguments; if it does not start cleanly, a minimal safe set is used instead, so a bad argument can never keep Minecraft from launching. The arguments are written to the Fabric profiles of the selected version that use your `.minecraft` folder; profiles with their own game directory are left alone.
+On top of that come G1 garbage collector settings tuned for short pauses (fewer stutters), a larger code cache on PCs with 12 GB or more, earlier background collection on processors with 8 or more threads, and deeper GraalVM inlining on processors with 12 or more threads. Before GraalVM's arguments are saved, MCperfBooster starts GraalVM once with exactly these arguments; if that does not start cleanly, a minimal safe set is tried, and if GraalVM does not start at all, Minecraft stays on the launcher's own Java. The launcher's own Java gets the same tuning where it runs Java 17, 21 or 25; on the older Java 8 (Minecraft 1.16.5) and 16 (1.17) it only gets the memory settings and G1, which those take. The arguments are written to the Fabric profiles of the selected version that use your `.minecraft` folder; profiles with their own game directory are left alone.
 
 ### License
 

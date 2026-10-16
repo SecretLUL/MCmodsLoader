@@ -22,12 +22,13 @@ public interface IFabricService
 }
 
 /// <summary>
-/// What <see cref="FabricService.ApplyJavaSettings"/> found: how many profiles it is about
-/// (<see cref="Matched"/>) and how many of those it had to change (<see cref="Changed"/>). No match means
-/// there is nothing to set the Java on; a match that did not change means it was set up already.
-/// A profile in a file that could not be read or written counts for neither.
+/// What <see cref="FabricService.ApplyJavaSettings"/> or <see cref="FabricService.DetachRuntimes"/> found: how
+/// many profiles it is about (<see cref="Matched"/>) and how many of those it had to change
+/// (<see cref="Changed"/>). No match means there is nothing to set the Java on; a match that did not change
+/// means it was set up already. A profile in a file that could not be read or written counts for neither, and
+/// <see cref="Error"/> then says which file and why; it is null when every file worked.
 /// </summary>
-public sealed record ProfileJavaUpdate(int Matched, int Changed);
+public sealed record ProfileJavaUpdate(int Matched, int Changed, string? Error = null);
 
 public class FabricService : IFabricService
 {
@@ -587,10 +588,12 @@ public class FabricService : IFabricService
         string defaultProfilesFile = Path.Combine(minecraftPath, "launcher_profiles.json");
         string msStoreProfilesFile = Path.Combine(minecraftPath, "launcher_profiles_microsoft_store.json");
 
-        // Only a profile created here gets these; an existing one keeps what its owner chose. Games older
-        // than the table covers (before 1.16.5) keep the launcher's own defaults.
-        string newProfileJavaArgs = JavaRuntimeCatalog.GetJavaMajor(mcVersion) is int javaMajor
-            ? JvmArguments.Build(javaMajor, graalVm: false, system, distantHorizons: false)
+        // Only a profile created here gets these; an existing one keeps what its owner chose. A new profile
+        // starts on the launcher's own Java, so the arguments must suit that one (Java 8 for 1.16.5), not
+        // the GraalVM the injection may put it on later. Games older than the table covers (before 1.16.5)
+        // keep the launcher's own defaults.
+        string newProfileJavaArgs = JavaRuntimeCatalog.GetJavaMajor(mcVersion) is not null
+            ? JvmArguments.Build(JavaRuntimeCatalog.GetLauncherJavaMajor(mcVersion, minecraftPath), graalVm: false, system, distantHorizons: false)
             : LauncherDefaultJavaArgs;
 
         // If neither file exists, create a default launcher_profiles.json
@@ -727,7 +730,7 @@ public class FabricService : IFabricService
     /// javaw.exe; null removes the setting, so the launcher uses its own Java again) on every Fabric profile of
     /// this game version. Profiles with a game folder of their own belong to another modpack and are left alone.
     /// Returns how many profiles it is about and how many of those actually changed, over both launcher
-    /// profile files; a file that cannot be read or written is skipped.
+    /// profile files; a file that cannot be read or written is skipped and named in the result's error.
     /// </summary>
     public static ProfileJavaUpdate ApplyJavaSettings(string minecraftPath, string mcVersion, string? javaExecutable, string javaArgs)
     {
@@ -753,9 +756,10 @@ public class FabricService : IFabricService
     /// Takes the profiles off a runtime this app installed, before that runtime is deleted: removes the Java
     /// executable of every profile that points below <paramref name="runtimesRoot"/> and, where
     /// <paramref name="argsForGameVersion"/> has arguments for the profile's game version, puts them in place of
-    /// the Java arguments (they were tuned for that runtime). Returns how many profiles changed.
+    /// the Java arguments (they were tuned for that runtime). A set <see cref="ProfileJavaUpdate.Error"/> means
+    /// some profiles may still point at the runtimes, which must then not be deleted.
     /// </summary>
-    public static int DetachRuntimes(string minecraftPath, string runtimesRoot, Func<string, string?> argsForGameVersion)
+    public static ProfileJavaUpdate DetachRuntimes(string minecraftPath, string runtimesRoot, Func<string, string?> argsForGameVersion)
     {
         return EditProfiles(minecraftPath, profile =>
         {
@@ -767,7 +771,7 @@ public class FabricService : IFabricService
                 SetString(profile, "javaArgs", javaArgs);
 
             return ProfileEdit.Changed;
-        }).Changed;
+        });
     }
 
     /// <summary>What an edit made of one launcher profile.</summary>
@@ -792,6 +796,7 @@ public class FabricService : IFabricService
     {
         int matchedProfiles = 0;
         int changedProfiles = 0;
+        var errors = new List<string>();
         foreach (string fileName in ProfileFileNames)
         {
             string file = Path.Combine(minecraftPath, fileName);
@@ -835,12 +840,13 @@ public class FabricService : IFabricService
             }
             catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException)
             {
-                // This file cannot be read or written; the other one may still work.
-                continue;
+                // This file cannot be read or written (a read-only launcher_profiles.json, for one); the other
+                // one may still work, and the caller learns about this one.
+                errors.Add($"{fileName}: {ex.Message}");
             }
         }
 
-        return new ProfileJavaUpdate(matchedProfiles, changedProfiles);
+        return new ProfileJavaUpdate(matchedProfiles, changedProfiles, errors.Count > 0 ? string.Join(" ", errors) : null);
     }
 
     /// <summary>

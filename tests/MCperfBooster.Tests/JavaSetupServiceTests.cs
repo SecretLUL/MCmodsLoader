@@ -399,10 +399,8 @@ public class JavaSetupServiceTests : IDisposable
 
     // ---- Games without a Java setup --------------------------------------
 
-    [Theory]
-    [InlineData(true)]
-    [InlineData(false)]
-    public async Task SetUpAsync_ForAGameBefore1_16_5_ChangesNothing(bool useGraalVm)
+    [Fact]
+    public async Task SetUpAsync_ForAGameBefore1_16_5_ChangesNothing()
     {
         string java = Path.Combine(_graalVm.RuntimesRoot, "graalvm-17", "bin", "javaw.exe");
         WriteProfiles(Profile("old", "fabric-loader-0.17.2-1.16.4", java, "-Xmx1G"));
@@ -410,12 +408,30 @@ public class JavaSetupServiceTests : IDisposable
         var oldTime = new DateTime(2020, 1, 1, 0, 0, 0, DateTimeKind.Utc);
         File.SetLastWriteTimeUtc(ProfilesFile, oldTime);
 
-        JavaSetupOutcome outcome = await SetUp(useGraalVm, mcVersion: "1.16.4");
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true, mcVersion: "1.16.4");
 
         Assert.Equal(new JavaSetupOutcome("unchanged (Java is only set up for Minecraft 1.16.5 and newer)", null, null), outcome);
         Assert.Equal(before, File.ReadAllText(ProfilesFile));
         Assert.Equal(oldTime, File.GetLastWriteTimeUtc(ProfilesFile));
         Assert.Empty(_graalVm.Calls);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_SwitchedOffWhileAnOldGameIsSelected_StillRemovesGraalVm()
+    {
+        // The switch says GraalVM goes on the next injection, whichever version that is for.
+        string java21 = Path.Combine(_graalVm.RuntimesRoot, "graalvm-21", "bin", "javaw.exe");
+        WriteProfiles(
+            Profile("old", "fabric-loader-0.17.2-1.12.2", javaArgs: "-Xmx1G"),
+            Profile(FabricKey, "fabric-loader-0.17.2-1.21.4", java21, "graal-args"));
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: false, mcVersion: "1.12.2");
+
+        Assert.Equal(new JavaSetupOutcome("unchanged (Java is only set up for Minecraft 1.16.5 and newer)", null, null), outcome);
+        Assert.Equal(new[] { "remove-all" }, _graalVm.Calls);
+        Assert.Null(Str(ReadProfile(FabricKey), "javaDir"));
+        Assert.Equal(HotSpotArgs(21), Str(ReadProfile(FabricKey), "javaArgs"));
+        Assert.Equal("-Xmx1G", Str(ReadProfile("old"), "javaArgs"));
     }
 
     [Theory]
@@ -436,7 +452,8 @@ public class JavaSetupServiceTests : IDisposable
         Assert.Equal(new JavaSetupOutcome("unchanged (this Minecraft version needs a newer Java than any GraalVM)", null, null), outcome);
         Assert.Equal(before, File.ReadAllText(ProfilesFile));
         Assert.Equal(oldTime, File.GetLastWriteTimeUtc(ProfilesFile));
-        Assert.Empty(_graalVm.Calls);
+        // Switched off, the downloaded runtimes still go; no profile pointed at them here.
+        Assert.Equal(useGraalVm ? Array.Empty<string>() : new[] { "remove-all" }, _graalVm.Calls);
     }
 
     [Fact]
@@ -668,5 +685,86 @@ public class JavaSetupServiceTests : IDisposable
         await Assert.ThrowsAnyAsync<OperationCanceledException>(() => SetUp(useGraalVm: false, ct: cts.Token));
 
         Assert.Empty(_graalVm.Calls);
+    }
+
+    // ---- The launcher's own Java ----------------------------------------
+
+    [Theory]
+    [InlineData(false)]
+    [InlineData(true)]
+    public async Task SetUpAsync_For1_16_5OnTheLaunchersJava_WritesArgumentsJava8Accepts(bool graalVmFails)
+    {
+        // The launcher starts 1.16.5 on Java 8, which refuses the code heap options a big PC gets for Java 17.
+        WriteProfiles(Profile("fabric-loader-1.16.5", "fabric-loader-0.17.2-1.16.5", javaArgs: "-Xmx2G"));
+        var bigPc = new SystemProfile(32 * Gib, 16);
+        if (graalVmFails)
+            _graalVm.OnEnsure = (_, _, _) => NotInstalled("Could not download GraalVM: offline.");
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: graalVmFails, mcVersion: "1.16.5", system: bigPc);
+
+        string javaArgs = Str(ReadProfile("fabric-loader-1.16.5"), "javaArgs")!;
+        Assert.Equal(JvmArguments.Build(8, graalVm: false, bigPc, distantHorizons: false), javaArgs);
+        Assert.Equal("-Xms6G -Xmx6G -XX:+UseG1GC -XX:MaxGCPauseMillis=37 -XX:+DisableExplicitGC", javaArgs);
+        Assert.DoesNotContain("CodeHeapSize", javaArgs);
+        Assert.StartsWith("the launcher's own Java", outcome.Summary);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_For1_16_5OnGraalVm_UsesTheFullSetForJava17()
+    {
+        WriteProfiles(Profile("fabric-loader-1.16.5", "fabric-loader-0.17.2-1.16.5"));
+        _graalVm.OnEnsure = (major, _, _) => Installed(Runtime(major, "17.0.12"));
+        _graalVm.OnTest = (_, _) => Ok;
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true, mcVersion: "1.16.5");
+
+        Assert.Equal("ensure 17", _graalVm.Calls[0]);
+        Assert.Equal(JvmArguments.Build(17, graalVm: true, Pc, distantHorizons: false), Str(ReadProfile("fabric-loader-1.16.5"), "javaArgs"));
+        Assert.Equal("Oracle GraalVM 17.0.12, 4 GB of memory for Minecraft", outcome.Summary);
+    }
+
+    // ---- Profile files that cannot be written ----------------------------
+
+    [Fact]
+    public async Task SetUpAsync_SwitchedOffWithAReadOnlyProfileFile_KeepsGraalVm()
+    {
+        // Some players make launcher_profiles.json read-only so the launcher cannot change it. The profile keeps
+        // pointing at GraalVM then, so deleting GraalVM would leave it with a Java that is gone.
+        string java21 = Path.Combine(_graalVm.RuntimesRoot, "graalvm-21", "bin", "javaw.exe");
+        WriteDefaultProfile(javaDir: java21, javaArgs: "graal-args");
+        File.SetAttributes(ProfilesFile, FileAttributes.ReadOnly);
+        try
+        {
+            JavaSetupOutcome outcome = await SetUp(useGraalVm: false);
+
+            Assert.DoesNotContain("remove-all", _graalVm.Calls);
+            Assert.StartsWith("GraalVM was kept, because the launcher profiles could not all be switched back", outcome.Problem);
+            Assert.Contains("launcher_profiles.json", outcome.Problem);
+            Assert.Equal(java21, Str(ReadProfile(FabricKey), "javaDir"));
+        }
+        finally
+        {
+            File.SetAttributes(ProfilesFile, FileAttributes.Normal);
+        }
+    }
+
+    [Fact]
+    public async Task SetUpAsync_WithAReadOnlyProfileFile_SaysTheFileCouldNotBeWritten()
+    {
+        WriteDefaultProfile();
+        _graalVm.OnEnsure = (major, _, _) => Installed(Runtime(major, "21.0.12"));
+        _graalVm.OnTest = (_, _) => Ok;
+        File.SetAttributes(ProfilesFile, FileAttributes.ReadOnly);
+        try
+        {
+            JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+            Assert.StartsWith("The Java settings could not be written to the launcher profiles (launcher_profiles.json: ", outcome.Problem);
+            Assert.DoesNotContain("No Fabric profile", outcome.Problem);
+        }
+        finally
+        {
+            File.SetAttributes(ProfilesFile, FileAttributes.Normal);
+        }
     }
 }

@@ -95,6 +95,37 @@ public class JavaRuntimeCatalogTests : IDisposable
         Assert.Equal(21, JavaRuntimeCatalog.GetJavaMajor("1.21.5", "\0invalid"));
     }
 
+    [Theory]
+    // Mojang's own table: what the launcher starts each version with when no version json says otherwise.
+    [InlineData("1.8.9", 8)]
+    [InlineData("1.16.4", 8)]
+    [InlineData("1.16.5", 8)]
+    [InlineData("1.17", 16)]
+    [InlineData("1.17.1", 16)]
+    [InlineData("1.18", 17)]
+    [InlineData("1.20.4", 17)]
+    [InlineData("1.20.5", 21)]
+    [InlineData("1.21.11", 21)]
+    [InlineData("26.1", 25)]
+    [InlineData("26.3", 25)]
+    public void GetLauncherJavaMajor_FollowsMojangsTable(string mcVersion, int expected)
+    {
+        Assert.Equal(expected, JavaRuntimeCatalog.GetLauncherJavaMajor(mcVersion));
+        Assert.Equal(expected, JavaRuntimeCatalog.GetLauncherJavaMajor(mcVersion, _minecraftDir));
+    }
+
+    [Theory]
+    [InlineData(8)]
+    [InlineData(29)]
+    public void GetLauncherJavaMajor_TakesWhatTheVersionJsonNames(int declared)
+    {
+        // Lower or higher: the launcher starts the game on exactly this Java.
+        WriteVersionJson("1.21.4", $$"""{ "javaVersion": { "component": "x", "majorVersion": {{declared}} } }""");
+
+        Assert.Equal(declared, JavaRuntimeCatalog.GetLauncherJavaMajor("1.21.4", _minecraftDir));
+        Assert.Equal(21, JavaRuntimeCatalog.GetLauncherJavaMajor("1.21.4"));
+    }
+
     [Fact]
     public void GetJavaMajor_ReadsVersionJsonWithCommentsAndTrailingCommas()
     {

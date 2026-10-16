@@ -132,6 +132,46 @@ public class ModPresetsTests
     }
 
     [Fact]
+    public void MigrateLegacyDataDirectory_WhenTheOldFolderCannotBeMoved_CopiesItsFiles()
+    {
+        string localAppData = Path.Combine(TestEnvironment.RunDirectory, $"appdata_{Guid.NewGuid():N}");
+        string legacy = Path.Combine(localAppData, "MCmodsLoader");
+        string current = Path.Combine(localAppData, AppPaths.AppName);
+        Directory.CreateDirectory(legacy);
+        File.WriteAllText(Path.Combine(legacy, "settings.json"), """{ "optionalMods": { "distanthorizons": true } }""");
+        File.WriteAllText(Path.Combine(legacy, "mods.v2.json"), "[]");
+
+        // A file held open (by a virus scanner, say) keeps the folder from being renamed, not from being read.
+        using (new FileStream(Path.Combine(legacy, "mods.v2.json"), FileMode.Open, FileAccess.Read, FileShare.Read))
+        {
+            Assert.True(AppPaths.MigrateLegacyDataDirectory(localAppData));
+        }
+
+        Assert.True(AppSettings.Load(Path.Combine(current, "settings.json")).OptionalModChoices["distanthorizons"]);
+        Assert.Equal("[]", File.ReadAllText(Path.Combine(current, "mods.v2.json")));
+    }
+
+    [Fact]
+    public void MigrateLegacyDataDirectory_AfterAFailedFirstAttempt_FillsInWhatIsMissingButOverwritesNothing()
+    {
+        string localAppData = Path.Combine(TestEnvironment.RunDirectory, $"appdata_{Guid.NewGuid():N}");
+        string legacy = Path.Combine(localAppData, "MCmodsLoader");
+        string current = Path.Combine(localAppData, AppPaths.AppName);
+        Directory.CreateDirectory(legacy);
+        Directory.CreateDirectory(current);
+        File.WriteAllText(Path.Combine(legacy, "settings.json"), """{ "optionalMods": { "distanthorizons": true } }""");
+        File.WriteAllText(Path.Combine(legacy, "mods.v2.json"), "old");
+        File.WriteAllText(Path.Combine(current, "mods.v2.json"), "new");
+
+        Assert.True(AppPaths.MigrateLegacyDataDirectory(localAppData));
+        Assert.True(AppSettings.Load(Path.Combine(current, "settings.json")).OptionalModChoices["distanthorizons"]);
+        Assert.Equal("new", File.ReadAllText(Path.Combine(current, "mods.v2.json")));
+
+        // Nothing left to fill in: the next start does nothing.
+        Assert.False(AppPaths.MigrateLegacyDataDirectory(localAppData));
+    }
+
+    [Fact]
     public void LoadFromResource_ReturnsValidCuratedList()
     {
         var mods = ModPresets.LoadFromResource();

@@ -48,6 +48,12 @@ public sealed class JavaSetupService
     private async Task<JavaSetupOutcome> SetUpCoreAsync(string minecraftPath, string mcVersion, bool useGraalVm, bool distantHorizons,
         IProgress<RuntimeDownloadProgress>? progress, CancellationToken ct)
     {
+        SystemProfile system = _detectSystem();
+
+        // Switched off, GraalVM goes whichever version is selected: the switch promised that, and the profiles
+        // of other versions may be the ones still running on it.
+        string? cleanupProblem = useGraalVm ? null : RemoveGraalVm(minecraftPath, system, distantHorizons);
+
         if (JavaRuntimeCatalog.GetJavaMajor(mcVersion, minecraftPath) is not int javaMajor)
         {
             // Nothing is written: the profile keeps whatever its owner chose.
@@ -55,24 +61,14 @@ public sealed class JavaSetupService
                 JavaRuntimeCatalog.GetJavaMajor(mcVersion) is null
                     ? "unchanged (Java is only set up for Minecraft 1.16.5 and newer)"
                     : "unchanged (this Minecraft version needs a newer Java than any GraalVM)",
-                null, null);
+                cleanupProblem, null);
         }
 
-        SystemProfile system = _detectSystem();
-        string hotSpotArgs = JvmArguments.Build(javaMajor, graalVm: false, system, distantHorizons);
+        // For the launcher's own Java, which is not always the one GraalVM stands in for: 1.16.5 runs on Java 8 there.
+        string hotSpotArgs = LauncherJavaArgs(mcVersion, minecraftPath, system, distantHorizons);
 
         if (!useGraalVm)
-        {
-            // Profiles of every game version leave the runtimes before these are deleted, or one of them would
-            // be left pointing at a Java that is gone. They get the plain arguments for their own game version.
-            FabricService.DetachRuntimes(minecraftPath, _graalVm.RuntimesRoot,
-                gameVersion => JavaRuntimeCatalog.GetJavaMajor(gameVersion) is int major
-                    ? JvmArguments.Build(major, graalVm: false, system, distantHorizons)
-                    : null);
-            _graalVm.RemoveAll();
-
-            return Apply(minecraftPath, mcVersion, null, hotSpotArgs, "the launcher's own Java (GraalVM is switched off)", null, null);
-        }
+            return Apply(minecraftPath, mcVersion, null, hotSpotArgs, "the launcher's own Java (GraalVM is switched off)", cleanupProblem, null);
 
         RuntimeInstallResult install = await _graalVm.EnsureInstalledAsync(javaMajor, progress, ct).ConfigureAwait(false);
         if (install.Runtime is not { } runtime)
@@ -107,19 +103,48 @@ public sealed class JavaSetupService
         return Apply(minecraftPath, mcVersion, runtime.JavawExe, javaArgs, $"Oracle GraalVM {runtime.Version}", null, note);
     }
 
+    /// <summary>
+    /// Takes every profile off the downloaded runtimes, onto the launcher's own Java with arguments for its game
+    /// version, and only then deletes the runtimes. Returns a problem when a profile file could not be changed:
+    /// GraalVM then stays, since a profile may still point at it, and deleting it would leave that profile
+    /// with a Java that is gone.
+    /// </summary>
+    private string? RemoveGraalVm(string minecraftPath, SystemProfile system, bool distantHorizons)
+    {
+        ProfileJavaUpdate detach = FabricService.DetachRuntimes(minecraftPath, _graalVm.RuntimesRoot,
+            gameVersion => LauncherJavaArgs(gameVersion, minecraftPath, system, distantHorizons));
+        if (detach.Error is { } error)
+            return $"GraalVM was kept, because the launcher profiles could not all be switched back to the launcher's own Java ({error}).";
+
+        _graalVm.RemoveAll();
+        return null;
+    }
+
+    /// <summary>
+    /// Arguments for the Java the launcher itself starts a game version with. For Java 8 and 16, which this app
+    /// never tested its tuning on, that is only the memory and G1, which every Java takes.
+    /// </summary>
+    private static string LauncherJavaArgs(string mcVersion, string minecraftPath, SystemProfile system, bool distantHorizons) =>
+        JvmArguments.Build(JavaRuntimeCatalog.GetLauncherJavaMajor(mcVersion, minecraftPath), graalVm: false, system, distantHorizons);
+
     /// <summary>The way out of every GraalVM failure: the launcher's own Java, with the same memory.</summary>
     private static JavaSetupOutcome UseLauncherJava(string minecraftPath, string mcVersion, string hotSpotArgs, string problem) =>
         Apply(minecraftPath, mcVersion, null, hotSpotArgs, "the launcher's own Java", problem, null);
 
     /// <summary>
-    /// Writes the settings to the profiles and sums up what Minecraft runs on. No profile to write them to is a
-    /// problem of its own, added to the one there may be already; a profile that needed no change is not.
+    /// Writes the settings to the profiles and sums up what Minecraft runs on. A profile file that could not be
+    /// written, or no profile to write to, is a problem of its own, added to the one there may be already; a
+    /// profile that needed no change is not.
     /// </summary>
     private static JavaSetupOutcome Apply(string minecraftPath, string mcVersion, string? javawExe, string javaArgs,
         string runsOn, string? problem, string? note)
     {
         ProfileJavaUpdate update = FabricService.ApplyJavaSettings(minecraftPath, mcVersion, javawExe, javaArgs);
-        if (update.Matched == 0)
+        if (update.Error is { } error)
+        {
+            problem = Join(problem, $"The Java settings could not be written to the launcher profiles ({error}).");
+        }
+        else if (update.Matched == 0)
         {
             problem = Join(problem,
                 $"No Fabric profile of Minecraft {mcVersion} that uses this .minecraft folder was found, so its Java settings were not changed.");

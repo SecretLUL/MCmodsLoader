@@ -86,6 +86,28 @@ public static class JavaRuntimeCatalog
         return fromTable;
     }
 
+    /// <summary>
+    /// The Java the official launcher itself starts a game version with: what the installed version json
+    /// names, otherwise Mojang's table (Java 8 up to 1.16.5, 16 for 1.17, 17 up to 1.20.4, 21 up to 1.21.x,
+    /// 25 from 26.1). Arguments for the launcher's own Java must suit this one, not the GraalVM that
+    /// <see cref="GetJavaMajor(string)"/> picks: Java 8 refuses the code heap options Java 17 knows.
+    /// </summary>
+    public static int GetLauncherJavaMajor(string mcVersion, string? minecraftPath = null)
+    {
+        if (minecraftPath != null && ReadDeclaredJavaMajor(mcVersion, minecraftPath) is int declared)
+            return declared;
+
+        var compare = MinecraftVersionComparer.Instance;
+        if (compare.Compare(mcVersion, "1.17") < 0)
+            return 8;
+        if (compare.Compare(mcVersion, "1.18") < 0)
+            return 16;
+        if (compare.Compare(mcVersion, "1.20.5") < 0)
+            return 17;
+
+        return compare.Compare(mcVersion, "26") < 0 ? 21 : 25;
+    }
+
     private static int? ReadDeclaredJavaMajor(string mcVersion, string minecraftPath)
     {
         if (string.IsNullOrWhiteSpace(minecraftPath))
