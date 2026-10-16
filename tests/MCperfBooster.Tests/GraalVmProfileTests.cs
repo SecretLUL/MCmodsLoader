@@ -335,7 +335,8 @@ public class FabricJavaSettingsTests : IDisposable
             return version == "26.3-pre-2" ? "args" : null;
         });
 
-        Assert.Equal(new[] { "beta.2-26.3-pre-2", "26.3-pre-2" }, asked);
+        // "beta.2-26.3-pre-2" starts with a letter: the end of the loader's version, not a game version.
+        Assert.Equal(new[] { "26.3-pre-2" }, asked);
         Assert.Equal("args", Str(ReadProfile(ProfilesFile, "a"), "javaArgs"));
     }
 

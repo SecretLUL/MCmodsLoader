@@ -723,7 +723,36 @@ public class JavaSetupServiceTests : IDisposable
         Assert.Equal("Oracle GraalVM 17.0.12, 4 GB of memory for Minecraft", outcome.Summary);
     }
 
+    [Fact]
+    public async Task SetUpAsync_SwitchedOff_GivesAProfileOnABetaLoaderTheArgumentsOfItsGame()
+    {
+        // The loader's own dash ("0.20.0-beta.2") must not be taken for the start of the game version.
+        string java25 = Path.Combine(_graalVm.RuntimesRoot, "graalvm-25", "bin", "javaw.exe");
+        WriteProfiles(
+            Profile(FabricKey, "fabric-loader-0.17.2-1.21.4", javaArgs: "-Xmx2G"),
+            Profile("beta", "fabric-loader-0.20.0-beta.2-26.3", java25, "graal-args"));
+
+        await SetUp(useGraalVm: false);
+
+        Assert.Null(Str(ReadProfile("beta"), "javaDir"));
+        Assert.Equal(HotSpotArgs(25), Str(ReadProfile("beta"), "javaArgs"));
+    }
+
     // ---- Profile files that cannot be written ----------------------------
+
+    [Fact]
+    public async Task SetUpAsync_WithABrokenSecondProfileFile_WritesTheFirstAndOnlyNotesTheOther()
+    {
+        // Without any GraalVM on the disk there is nothing that could have been "kept".
+        WriteDefaultProfile();
+        File.WriteAllText(Path.Combine(_mc, "launcher_profiles_microsoft_store.json"), "{ not json");
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: false);
+
+        Assert.Null(outcome.Problem);
+        Assert.StartsWith("One launcher profile file could not be read or written and was left as it was (launcher_profiles_microsoft_store.json: ", outcome.Note);
+        Assert.Equal(HotSpotArgs(21), Str(ReadProfile(FabricKey), "javaArgs"));
+    }
 
     [Fact]
     public async Task SetUpAsync_SwitchedOffWithAReadOnlyProfileFile_KeepsGraalVm()
@@ -732,6 +761,7 @@ public class JavaSetupServiceTests : IDisposable
         // pointing at GraalVM then, so deleting GraalVM would leave it with a Java that is gone.
         string java21 = Path.Combine(_graalVm.RuntimesRoot, "graalvm-21", "bin", "javaw.exe");
         WriteDefaultProfile(javaDir: java21, javaArgs: "graal-args");
+        Directory.CreateDirectory(Path.GetDirectoryName(java21)!);
         File.SetAttributes(ProfilesFile, FileAttributes.ReadOnly);
         try
         {

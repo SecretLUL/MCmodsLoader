@@ -141,9 +141,9 @@ public class JavaRuntimeCatalogTests : IDisposable
 
     [Theory]
     [InlineData(17, "https://download.oracle.com/graalvm/17/archive/graalvm-jdk-17.0.12_windows-x64_bin.zip",
-        "8b978e56dddc0edc60db99794b56975740d9c52293b31549cfc3f7516fc18b43", "17.0.12", 318)]
+        "8b978e56dddc0edc60db99794b56975740d9c52293b31549cfc3f7516fc18b43", "17.0.12", 303)]
     [InlineData(21, "https://download.oracle.com/graalvm/21/archive/graalvm-jdk-21.0.12_windows-x64_bin.zip",
-        "7560971e52b236ddba7a22e7a682a9a185e56a2f6ee9cd6c4ecbb800e9643990", "21.0.12", 325)]
+        "7560971e52b236ddba7a22e7a682a9a185e56a2f6ee9cd6c4ecbb800e9643990", "21.0.12", 309)]
     public void GetBuild_PinsTheFrozenBuilds(int javaMajor, string url, string sha256, string version, int megabytes)
     {
         var build = JavaRuntimeCatalog.GetBuild(javaMajor);
@@ -168,7 +168,7 @@ public class JavaRuntimeCatalogTests : IDisposable
         Assert.Equal(build.DownloadUrl + ".sha256", build.ChecksumUrl);
         Assert.Null(build.PinnedSha256);
         Assert.Null(build.FixedVersion);
-        Assert.Equal(362, build.ApproximateDownloadMegabytes);
+        Assert.Equal(345, build.ApproximateDownloadMegabytes);
     }
 
     [Fact]

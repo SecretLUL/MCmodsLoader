@@ -852,6 +852,7 @@ public class FabricService : IFabricService
     /// <summary>
     /// Arguments for the game version of a "fabric-loader-&lt;loader&gt;-&lt;mc&gt;" id. Loader and game version can
     /// both contain dashes ("0.20.0-beta.2", "26.3-pre-2"), so every split is tried, the longest game version first.
+    /// Only a tail that starts with a digit can be a game version: "beta.2-26.3" is the end of the loader's.
     /// </summary>
     private static string? FindFabricJavaArgs(string versionId, Func<string, string?> argsForGameVersion)
     {
@@ -861,7 +862,8 @@ public class FabricService : IFabricService
         string rest = versionId[FabricLoaderPrefix.Length..];
         for (int dash = rest.IndexOf('-'); dash >= 0; dash = rest.IndexOf('-', dash + 1))
         {
-            if (argsForGameVersion(rest[(dash + 1)..]) is { } args)
+            string gameVersion = rest[(dash + 1)..];
+            if (gameVersion.Length > 0 && char.IsAsciiDigit(gameVersion[0]) && argsForGameVersion(gameVersion) is { } args)
                 return args;
         }
 

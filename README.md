@@ -52,7 +52,7 @@ With a single click, it sets up the **Fabric Loader**, injects an essential suit
 
 Versions older than 1.16.5 keep the launcher's own Java. For a future Minecraft version that needs a newer Java than any GraalVM release, the launcher's Java is kept as well, until a GraalVM for it exists.
 
-* **Download once, small on disk:** GraalVM comes straight from `download.oracle.com` (about 320–360 MB per Java version) and is checked against its SHA-256 checksum. Only the parts needed to play are unpacked, about 300 MB per version, to `%LOCALAPPDATA%\MCperfBooster\runtimes`. Only the versions you actually play are downloaded.
+* **Download once, small on disk:** GraalVM comes straight from `download.oracle.com` (about 300–350 MB per Java version, as Windows counts megabytes) and is checked against its SHA-256 checksum. Only the parts needed to play are unpacked, about 300 MB per version, to `%LOCALAPPDATA%\MCperfBooster\runtimes`. Only the versions you actually play are downloaded.
 * **Updates:** GraalVM 25 is updated whenever Oracle publishes a new 25.0.x build. 17.0.12 and 21.0.12 are the last builds of those versions Oracle offers for free; newer ones require a paid Oracle license, so they stay as they are.
 * **Switch it off:** Untick **Use GraalVM** under **Advanced**. The next injection puts the launcher's own Java back (with the same tuned arguments) and removes the downloaded GraalVM.
 

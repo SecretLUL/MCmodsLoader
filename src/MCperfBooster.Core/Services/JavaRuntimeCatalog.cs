@@ -11,14 +11,15 @@ namespace MCperfBooster.Core.Services;
 public static class JavaRuntimeCatalog
 {
     // 17 and 21 are frozen builds, so their checksums can be pinned. 25 follows "latest":
-    // its .sha256 file changes whenever Oracle ships an update.
+    // its .sha256 file changes whenever Oracle ships an update. Sizes are in the megabytes
+    // Windows and the progress bar count (1024 x 1024 bytes).
     private static readonly GraalVmBuild Graal17 = new(
         17,
         "https://download.oracle.com/graalvm/17/archive/graalvm-jdk-17.0.12_windows-x64_bin.zip",
         "8b978e56dddc0edc60db99794b56975740d9c52293b31549cfc3f7516fc18b43",
         ChecksumUrl: null,
         FixedVersion: "17.0.12",
-        ApproximateDownloadMegabytes: 318);
+        ApproximateDownloadMegabytes: 303);
 
     private static readonly GraalVmBuild Graal21 = new(
         21,
@@ -26,7 +27,7 @@ public static class JavaRuntimeCatalog
         "7560971e52b236ddba7a22e7a682a9a185e56a2f6ee9cd6c4ecbb800e9643990",
         ChecksumUrl: null,
         FixedVersion: "21.0.12",
-        ApproximateDownloadMegabytes: 325);
+        ApproximateDownloadMegabytes: 309);
 
     private static readonly GraalVmBuild Graal25 = new(
         25,
@@ -34,7 +35,7 @@ public static class JavaRuntimeCatalog
         PinnedSha256: null,
         ChecksumUrl: "https://download.oracle.com/graalvm/25/latest/graalvm-jdk-25_windows-x64_bin.zip.sha256",
         FixedVersion: null,
-        ApproximateDownloadMegabytes: 362);
+        ApproximateDownloadMegabytes: 345);
 
     private static readonly JsonDocumentOptions LenientJson = new() { CommentHandling = JsonCommentHandling.Skip, AllowTrailingCommas = true };
 

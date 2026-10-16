@@ -114,10 +114,29 @@ public sealed class JavaSetupService
         ProfileJavaUpdate detach = FabricService.DetachRuntimes(minecraftPath, _graalVm.RuntimesRoot,
             gameVersion => LauncherJavaArgs(gameVersion, minecraftPath, system, distantHorizons));
         if (detach.Error is { } error)
-            return $"GraalVM was kept, because the launcher profiles could not all be switched back to the launcher's own Java ({error}).";
+        {
+            // With no GraalVM on the disk there is nothing that was kept; a profile file that cannot be written
+            // is reported anyway where the selected version's settings are written.
+            return HasRuntimes()
+                ? $"GraalVM was kept, because the launcher profiles could not all be switched back to the launcher's own Java ({error})."
+                : null;
+        }
 
         _graalVm.RemoveAll();
         return null;
+    }
+
+    private bool HasRuntimes()
+    {
+        try
+        {
+            return Directory.Exists(_graalVm.RuntimesRoot) && Directory.EnumerateDirectories(_graalVm.RuntimesRoot, "graalvm-*").Any();
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            // Cannot look: better to say too much than to hide that GraalVM may still be there.
+            return true;
+        }
     }
 
     /// <summary>
@@ -140,9 +159,15 @@ public sealed class JavaSetupService
         string runsOn, string? problem, string? note)
     {
         ProfileJavaUpdate update = FabricService.ApplyJavaSettings(minecraftPath, mcVersion, javawExe, javaArgs);
-        if (update.Error is { } error)
+        if (update.Error is { } error && update.Matched == 0)
         {
             problem = Join(problem, $"The Java settings could not be written to the launcher profiles ({error}).");
+        }
+        else if (update.Error is { } otherFileError)
+        {
+            // The profile the launcher shows was set up; only the other profile file (often an old one of the
+            // Microsoft Store launcher) is unreadable or locked.
+            note = Join(note, $"One launcher profile file could not be read or written and was left as it was ({otherFileError}).");
         }
         else if (update.Matched == 0)
         {
