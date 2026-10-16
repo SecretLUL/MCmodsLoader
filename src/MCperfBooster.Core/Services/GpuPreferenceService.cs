@@ -30,24 +30,14 @@ public interface IGpuPreferenceStore
 /// </summary>
 public sealed class WindowsGpuPreferenceStore : IGpuPreferenceStore
 {
-    internal const string UserGpuPreferencesKey = @"Software\Microsoft\DirectX\UserGpuPreferences";
-
-    private readonly string _keyPath;
-
-    public WindowsGpuPreferenceStore()
-        : this(UserGpuPreferencesKey)
-    {
-    }
-
-    /// <param name="keyPath">Another key below HKEY_CURRENT_USER, for a check that must leave the real one alone.</param>
-    internal WindowsGpuPreferenceStore(string keyPath) => _keyPath = keyPath;
+    private const string KeyPath = @"Software\Microsoft\DirectX\UserGpuPreferences";
 
     public string? Get(string exePath)
     {
         if (!OperatingSystem.IsWindows())
             return null;
 
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(_keyPath);
+        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(KeyPath);
         object? value = key?.GetValue(exePath, null, RegistryValueOptions.DoNotExpandEnvironmentNames);
 
         // Windows writes text. Anything else is named by its kind, which never reads like a setting, so it is left alone.
@@ -59,7 +49,7 @@ public sealed class WindowsGpuPreferenceStore : IGpuPreferenceStore
         if (!OperatingSystem.IsWindows())
             return;
 
-        using RegistryKey key = Registry.CurrentUser.CreateSubKey(_keyPath);
+        using RegistryKey key = Registry.CurrentUser.CreateSubKey(KeyPath);
         key.SetValue(exePath, setting, RegistryValueKind.String);
     }
 
@@ -68,7 +58,7 @@ public sealed class WindowsGpuPreferenceStore : IGpuPreferenceStore
         if (!OperatingSystem.IsWindows())
             return;
 
-        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(_keyPath, writable: true);
+        using RegistryKey? key = Registry.CurrentUser.OpenSubKey(KeyPath, writable: true);
         key?.DeleteValue(exePath, throwOnMissingValue: false);
     }
 }
@@ -101,10 +91,11 @@ public sealed class GpuPreferenceService
     }
 
     /// <summary>
-    /// Gives <paramref name="targetExe"/> the graphics card of the first of <paramref name="launcherExes"/> that has
-    /// one picked. Nothing is written when none has, when the target has a card picked already, whoever picked it, or
-    /// when the card was carried over to it before: what the user did with it since stays as they left it. Returns the
-    /// parts carried over ("GpuPreference=2;"), or null when nothing was. Throws <see cref="IOException"/>,
+    /// Gives <paramref name="targetExe"/> the graphics card of the first of <paramref name="launcherExes"/> that has a
+    /// card setting; when that one leaves the card to Windows ("GpuPreference=0"), so does the target. Nothing is
+    /// written either when the target has a card setting already, whoever made it, or when the card was carried over
+    /// to it before: what the user did with it since stays as they left it. Returns the parts carried over
+    /// ("GpuPreference=2;"), or null when nothing was. Throws <see cref="IOException"/>,
     /// <see cref="UnauthorizedAccessException"/> or <see cref="SecurityException"/> when the record or Windows'
     /// settings cannot be read or written.
     /// </summary>
@@ -118,7 +109,10 @@ public sealed class GpuPreferenceService
         if (current != null && (!IsReadable(current) || HasGraphicsCardPart(current)))
             return null;
 
-        string? choice = launcherExes.Select(exe => GraphicsCardChoice(_store.Get(exe))).FirstOrDefault(found => found != null);
+        // The game ran on the first one's card until now; a card from further down would be forced on it.
+        string? launcherSetting = launcherExes.Select(_store.Get)
+            .FirstOrDefault(setting => setting != null && IsReadable(setting) && HasGraphicsCardPart(setting));
+        string? choice = GraphicsCardChoice(launcherSetting);
         if (choice == null)
             return null;
 
@@ -262,8 +256,9 @@ public sealed class GpuPreferenceService
     }
 
     /// <summary>
-    /// What was carried over, by target exe. A record that does not parse is forgotten (what it named stays in
-    /// Windows' settings, where it does no harm); one that cannot be read throws.
+    /// What was carried over, by target exe. A record that does not parse, or holds text no string can (a lone half
+    /// of a surrogate pair, written by hand), is forgotten: what it named stays in Windows' settings, where it does
+    /// no harm. One that cannot be read throws.
     /// </summary>
     private Dictionary<string, string> ReadRecord()
     {
@@ -283,7 +278,7 @@ public sealed class GpuPreferenceService
                     record[entry.Name] = choice;
             }
         }
-        catch (JsonException)
+        catch (Exception ex) when (ex is JsonException or InvalidOperationException)
         {
             record.Clear();
         }

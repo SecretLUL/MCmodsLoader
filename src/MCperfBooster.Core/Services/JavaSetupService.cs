@@ -123,11 +123,13 @@ public sealed class JavaSetupService
             gameVersion => LauncherJavaArgs(gameVersion, minecraftPath, system, distantHorizons));
         if (detach.Error is { } error)
         {
-            // With no GraalVM on the disk there is nothing that was kept; a profile file that cannot be written
-            // is reported anyway where the selected version's settings are written.
-            return HasRuntimes()
-                ? $"GraalVM was kept, because the launcher profiles could not all be switched back to the launcher's own Java ({error})."
-                : null;
+            if (HasRuntimes())
+                return $"GraalVM was kept, because the launcher profiles could not all be switched back to the launcher's own Java ({error}).";
+
+            // With no GraalVM on the disk there is nothing that was kept, nor anything for its graphics card; a
+            // profile file that cannot be written is reported anyway where the selected version's settings are written.
+            _gpuPreferences.RemoveCarriedOver();
+            return null;
         }
 
         _graalVm.RemoveAll();
@@ -195,10 +197,10 @@ public sealed class JavaSetupService
     }
 
     /// <summary>
-    /// Gives <paramref name="javawExe"/> the graphics card the user picked in Windows for the launcher's Java: first
-    /// for the one the launcher starts this game version with, which the game ran on until now, then for the others,
-    /// newest first. Returns a note for the report when a card was carried over or when that failed; the Java is set
-    /// up either way.
+    /// Gives <paramref name="javawExe"/> the graphics card the user picked in Windows for the launcher's Java. The
+    /// first Java with a card setting decides: the one the launcher starts this game version with, which the game ran
+    /// on until now, then the others, newest first. Returns a note for the report when a card was carried over or
+    /// when that failed; the Java is set up either way.
     /// </summary>
     private string? CarryOverGpuPreference(string minecraftPath, string mcVersion, string javawExe)
     {

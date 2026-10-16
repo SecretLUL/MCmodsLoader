@@ -849,6 +849,21 @@ public class JavaSetupServiceTests : IDisposable
     }
 
     [Fact]
+    public async Task SetUpAsync_WhenTheGamesOwnJavaLeavesTheCardToWindows_CarriesNothingOver()
+    {
+        // The game ran on "let Windows decide" until now; another Java's card would be forced on it.
+        GraalVmWithACardToCarryOver();
+        WriteVersionJson("""{ "javaVersion": { "component": "java-runtime-delta", "majorVersion": 21 } }""");
+        _gpu.Settings[LauncherJava("java-runtime-delta")] = "GpuPreference=0;";
+        _gpu.Settings[LauncherJava("java-runtime-epsilon")] = HighPerformance;
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Empty(_gpu.Writes);
+        Assert.Null(outcome.Note);
+    }
+
+    [Fact]
     public async Task SetUpAsync_WithoutTheGamesOwnCard_TakesTheNewestLauncherJavasCard()
     {
         var runtime = GraalVmWithACardToCarryOver();
@@ -1015,6 +1030,21 @@ public class JavaSetupServiceTests : IDisposable
         {
             File.SetAttributes(ProfilesFile, FileAttributes.Normal);
         }
+    }
+
+    [Fact]
+    public async Task SetUpAsync_SwitchedOffWithAnUnreadableProfileFileButNoGraalVmLeft_StillTakesTheCardAway()
+    {
+        // Nothing of GraalVM is on the disk any more, so nothing was kept that the card could still be for.
+        var runtime = GraalVmWithACardToCarryOver();
+        await SetUp(useGraalVm: true);
+        File.WriteAllText(Path.Combine(_mc, "launcher_profiles_microsoft_store.json"), "{ not json");
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: false);
+
+        Assert.Null(outcome.Problem);
+        Assert.False(_gpu.Settings.ContainsKey(runtime.JavawExe));
+        Assert.False(File.Exists(GpuRecord));
     }
 
     private void WriteVersionJson(string json)

@@ -101,20 +101,37 @@ public class GpuPreferenceServiceTests : IDisposable
     }
 
     [Theory]
-    [InlineData("GpuPreference=0;")]
     [InlineData("AppStatus=4;")]
     [InlineData(";SwapEffectUpgradeEnable=1;")]
     [InlineData("AutoHDREnable=2097;")]
-    [InlineData("GpuPreference=;")]
-    [InlineData("GpuPreference=fast;")]
+    [InlineData("")]
     [InlineData("not a setting")]
-    public void CarryOver_PassesOverALauncherJavaThatLeavesTheCardToWindows(string setting)
+    public void CarryOver_PassesOverALauncherJavaWithoutACardSetting(string setting)
     {
         _store.Settings[_delta] = setting;
         _store.Settings[_gamma] = PowerSaving;
 
         Assert.Equal(PowerSaving, CarryOverTo21());
         Assert.Equal(PowerSaving, _store.Settings[_graal21]);
+    }
+
+    [Theory]
+    [InlineData("GpuPreference=0;")]
+    [InlineData("AppStatus=4;GpuPreference=0;")]
+    [InlineData("GpuPreference=;")]
+    [InlineData("GpuPreference=fast;")]
+    [InlineData("SpecificAdapter=10DE&2520&0A6F1028;")]
+    public void CarryOver_StopsAtALauncherJavaThatLeavesTheCardToWindows(string setting)
+    {
+        // The first Java with a card setting decides: the game ran on "let Windows decide" until now, and so it stays.
+        _store.Settings[_delta] = setting;
+        _store.Settings[_gamma] = HighPerformance;
+
+        Assert.Null(CarryOverTo21());
+
+        Assert.Empty(_store.Writes);
+        Assert.False(_store.Settings.ContainsKey(_graal21));
+        Assert.False(File.Exists(_recordFile));
     }
 
     [Theory]
@@ -320,17 +337,33 @@ public class GpuPreferenceServiceTests : IDisposable
         Assert.False(File.Exists(_recordFile));
     }
 
-    [Fact]
-    public void RemoveCarriedOver_WithADamagedRecord_TouchesNothing()
+    [Theory]
+    [InlineData("{ not json")]
+    // Valid JSON, but text no .NET string can hold: a lone half of a surrogate pair.
+    [InlineData("{ \"C:\\\\x\\\\javaw.exe\": \"\\ud800\" }")]
+    [InlineData("{ \"\\ud800\": \"GpuPreference=2;\" }")]
+    public void RemoveCarriedOver_WithADamagedRecord_TouchesNothing(string record)
     {
         _store.Settings[_graal21] = HighPerformance;
         Directory.CreateDirectory(Path.GetDirectoryName(_recordFile)!);
-        File.WriteAllText(_recordFile, "{ not json");
+        File.WriteAllText(_recordFile, record);
 
         _service.RemoveCarriedOver();
 
         Assert.Empty(_store.Writes);
         Assert.Equal(HighPerformance, _store.Settings[_graal21]);
+    }
+
+    [Fact]
+    public void CarryOver_WithADamagedRecord_StartsAFreshOne()
+    {
+        _store.Settings[_delta] = HighPerformance;
+        Directory.CreateDirectory(Path.GetDirectoryName(_recordFile)!);
+        File.WriteAllText(_recordFile, "{ \"C:\\\\x\\\\javaw.exe\": \"\\ud800\" }");
+
+        Assert.Equal(HighPerformance, CarryOverTo21());
+
+        Assert.Equal(new Dictionary<string, string> { [_graal21] = HighPerformance }, ReadRecord());
     }
 
     [Fact]
