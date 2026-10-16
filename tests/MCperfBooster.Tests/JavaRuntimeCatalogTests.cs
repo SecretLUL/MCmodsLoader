@@ -126,6 +126,38 @@ public class JavaRuntimeCatalogTests : IDisposable
         Assert.Equal(21, JavaRuntimeCatalog.GetLauncherJavaMajor("1.21.4"));
     }
 
+    [Theory]
+    [InlineData("""{ "javaVersion": { "component": "java-runtime-delta", "majorVersion": 21 } }""", "java-runtime-delta")]
+    [InlineData("""{ "javaVersion": { "component": "jre-legacy", "majorVersion": 8 } }""", "jre-legacy")]
+    [InlineData("""{ "javaVersion": { "component": "java-runtime-zeta" } }""", "java-runtime-zeta")]
+    [InlineData("""{ "javaVersion": { "majorVersion": 21 } }""", null)]
+    [InlineData("""{ "javaVersion": { "component": 21 } }""", null)]
+    [InlineData("""{ "javaVersion": "java-runtime-delta" }""", null)]
+    [InlineData("""{ "id": "1.21.4" }""", null)]
+    [InlineData("{ not json", null)]
+    // It becomes part of a path, so anything but a plain folder name is refused.
+    [InlineData("""{ "javaVersion": { "component": "" } }""", null)]
+    [InlineData("""{ "javaVersion": { "component": "  " } }""", null)]
+    [InlineData("""{ "javaVersion": { "component": "." } }""", null)]
+    [InlineData("""{ "javaVersion": { "component": ".." } }""", null)]
+    [InlineData("""{ "javaVersion": { "component": "..\\..\\x" } }""", null)]
+    [InlineData("""{ "javaVersion": { "component": "a/b" } }""", null)]
+    [InlineData("""{ "javaVersion": { "component": "C:x" } }""", null)]
+    public void GetLauncherJavaComponent_TakesTheRuntimeTheVersionJsonNames(string json, string? expected)
+    {
+        WriteVersionJson("1.21.4", json);
+
+        Assert.Equal(expected, JavaRuntimeCatalog.GetLauncherJavaComponent("1.21.4", _minecraftDir));
+    }
+
+    [Fact]
+    public void GetLauncherJavaComponent_WithoutVersionJson_IsNull()
+    {
+        Assert.Null(JavaRuntimeCatalog.GetLauncherJavaComponent("1.21.4", _minecraftDir));
+        Assert.Null(JavaRuntimeCatalog.GetLauncherJavaComponent("1.21.4", ""));
+        Assert.Null(JavaRuntimeCatalog.GetLauncherJavaComponent("1.21.4", "\0invalid"));
+    }
+
     [Fact]
     public void GetJavaMajor_ReadsVersionJsonWithCommentsAndTrailingCommas()
     {

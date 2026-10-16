@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Security;
 
 namespace MCperfBooster.Core.Services;
 
@@ -12,18 +13,25 @@ public sealed record JavaSetupOutcome(string Summary, string? Problem, string? N
 /// <summary>
 /// Puts the Fabric profiles of a game version on the right Java after an injection: the downloaded Oracle GraalVM
 /// with tuned arguments, or the launcher's own Java (with the same tuning, minus the one Graal-only option) when
-/// GraalVM is switched off or cannot be used here. Never throws, cancelling through the token aside: whatever goes
-/// wrong comes back in the outcome, so a finished injection is never reported as failed because of Java.
+/// GraalVM is switched off or cannot be used here. A GraalVM also gets the graphics card the user picked in Windows
+/// for the launcher's Java (<see cref="GpuPreferenceService"/>), and loses it again with the runtimes. Never throws,
+/// cancelling through the token aside: whatever goes wrong comes back in the outcome, so a finished injection is
+/// never reported as failed because of Java.
 /// </summary>
 public sealed class JavaSetupService
 {
     private readonly IGraalVmService _graalVm;
+    private readonly GpuPreferenceService _gpuPreferences;
     private readonly Func<SystemProfile> _detectSystem;
 
+    /// <param name="gpuPreferences">Windows' graphics card settings; replaceable so tests never touch the registry.</param>
     /// <param name="detectSystem">What the arguments are sized for; replaceable so tests do not depend on the PC they run on.</param>
-    public JavaSetupService(IGraalVmService graalVm, Func<SystemProfile>? detectSystem = null)
+    public JavaSetupService(IGraalVmService graalVm, IGpuPreferenceStore gpuPreferences, Func<SystemProfile>? detectSystem = null)
     {
         _graalVm = graalVm;
+
+        // Next to the runtimes, which are folders of their own: removing them leaves the record in place.
+        _gpuPreferences = new GpuPreferenceService(gpuPreferences, Path.Combine(graalVm.RuntimesRoot, GpuPreferenceService.RecordFileName));
         _detectSystem = detectSystem ?? JvmArguments.DetectSystem;
     }
 
@@ -105,9 +113,9 @@ public sealed class JavaSetupService
 
     /// <summary>
     /// Takes every profile off the downloaded runtimes, onto the launcher's own Java with arguments for its game
-    /// version, and only then deletes the runtimes. Returns a problem when a profile file could not be changed:
-    /// GraalVM then stays, since a profile may still point at it, and deleting it would leave that profile
-    /// with a Java that is gone.
+    /// version, and only then deletes the runtimes and the graphics card they were given. Returns a problem when a
+    /// profile file could not be changed: GraalVM then stays, card and all, since a profile may still point at it,
+    /// and deleting it would leave that profile with a Java that is gone.
     /// </summary>
     private string? RemoveGraalVm(string minecraftPath, SystemProfile system, bool distantHorizons)
     {
@@ -123,6 +131,9 @@ public sealed class JavaSetupService
         }
 
         _graalVm.RemoveAll();
+
+        // Never throws; what Windows refuses is tried again on the next injection without GraalVM.
+        _gpuPreferences.RemoveCarriedOver();
         return null;
     }
 
@@ -147,15 +158,16 @@ public sealed class JavaSetupService
         JvmArguments.Build(JavaRuntimeCatalog.GetLauncherJavaMajor(mcVersion, minecraftPath), graalVm: false, system, distantHorizons);
 
     /// <summary>The way out of every GraalVM failure: the launcher's own Java, with the same memory.</summary>
-    private static JavaSetupOutcome UseLauncherJava(string minecraftPath, string mcVersion, string hotSpotArgs, string problem) =>
+    private JavaSetupOutcome UseLauncherJava(string minecraftPath, string mcVersion, string hotSpotArgs, string problem) =>
         Apply(minecraftPath, mcVersion, null, hotSpotArgs, "the launcher's own Java", problem, null);
 
     /// <summary>
     /// Writes the settings to the profiles and sums up what Minecraft runs on. A profile file that could not be
     /// written, or no profile to write to, is a problem of its own, added to the one there may be already; a
-    /// profile that needed no change is not.
+    /// profile that needed no change is not. Once a profile runs on <paramref name="javawExe"/>, that one gets
+    /// the graphics card of the launcher's Java.
     /// </summary>
-    private static JavaSetupOutcome Apply(string minecraftPath, string mcVersion, string? javawExe, string javaArgs,
+    private JavaSetupOutcome Apply(string minecraftPath, string mcVersion, string? javawExe, string javaArgs,
         string runsOn, string? problem, string? note)
     {
         ProfileJavaUpdate update = FabricService.ApplyJavaSettings(minecraftPath, mcVersion, javawExe, javaArgs);
@@ -175,8 +187,35 @@ public sealed class JavaSetupService
                 $"No Fabric profile of Minecraft {mcVersion} that uses this .minecraft folder was found, so its Java settings were not changed.");
         }
 
+        if (javawExe != null && update.Matched > 0 && CarryOverGpuPreference(minecraftPath, mcVersion, javawExe) is { } gpuNote)
+            note = Join(note, gpuNote);
+
         string summary = DescribeHeap(javaArgs) is { } heap ? $"{runsOn}, {heap} of memory for Minecraft" : runsOn;
         return new JavaSetupOutcome(summary, problem, note);
+    }
+
+    /// <summary>
+    /// Gives <paramref name="javawExe"/> the graphics card the user picked in Windows for the launcher's Java: first
+    /// for the one the launcher starts this game version with, which the game ran on until now, then for the others,
+    /// newest first. Returns a note for the report when a card was carried over or when that failed; the Java is set
+    /// up either way.
+    /// </summary>
+    private string? CarryOverGpuPreference(string minecraftPath, string mcVersion, string javawExe)
+    {
+        try
+        {
+            IEnumerable<string> launcherJavas = FabricService.GetLauncherJavawPaths(
+                minecraftPath, JavaRuntimeCatalog.GetLauncherJavaComponent(mcVersion, minecraftPath));
+
+            return _gpuPreferences.CarryOver(javawExe, launcherJavas) is { } choice
+                ? $"Windows' graphics preference for the launcher's Java ({GpuPreferenceService.Describe(choice)}) now applies to GraalVM too."
+                : null;
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or SecurityException)
+        {
+            return $"Windows' graphics preference for the launcher's Java could not be carried over to GraalVM ({ex.Message}). " +
+                   $"If Minecraft runs on the wrong graphics card, pick one for {javawExe} under Settings > System > Display > Graphics.";
+        }
     }
 
     /// <summary>

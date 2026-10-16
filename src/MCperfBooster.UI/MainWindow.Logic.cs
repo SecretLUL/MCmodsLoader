@@ -125,7 +125,7 @@ internal sealed partial class MainWindow
         _modrinthService = new ModrinthService(_httpClient);
         _modManagerService = new ModManagerService(_modrinthService);
         _graalVm = new GraalVmService(_httpClient);
-        _javaSetup = new JavaSetupService(_graalVm);
+        _javaSetup = new JavaSetupService(_graalVm, new WindowsGpuPreferenceStore());
     }
 
     // ---- Command routing -------------------------------------------------

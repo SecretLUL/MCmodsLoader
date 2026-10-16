@@ -109,7 +109,32 @@ public static class JavaRuntimeCatalog
         return compare.Compare(mcVersion, "26") < 0 ? 21 : 25;
     }
 
-    private static int? ReadDeclaredJavaMajor(string mcVersion, string minecraftPath)
+    /// <summary>
+    /// The Java runtime the launcher downloads for a game version ("java-runtime-delta"), as the installed version
+    /// json names it; null when there is none, or when the name could not be a folder of its own.
+    /// </summary>
+    public static string? GetLauncherJavaComponent(string mcVersion, string minecraftPath)
+    {
+        if (ReadJavaVersion(mcVersion, minecraftPath) is not { } javaVersion ||
+            !javaVersion.TryGetProperty("component", out var component) || component.ValueKind != JsonValueKind.String)
+            return null;
+
+        // It becomes part of a path, so a name like "..\x" must not get that far.
+        string? name = component.GetString();
+        return !string.IsNullOrWhiteSpace(name) && name is not ("." or "..") && name.IndexOfAny(Path.GetInvalidFileNameChars()) < 0
+            ? name
+            : null;
+    }
+
+    private static int? ReadDeclaredJavaMajor(string mcVersion, string minecraftPath) =>
+        ReadJavaVersion(mcVersion, minecraftPath) is { } javaVersion &&
+        javaVersion.TryGetProperty("majorVersion", out var major) && major.ValueKind == JsonValueKind.Number &&
+        major.TryGetInt32(out int value)
+            ? value
+            : null;
+
+    /// <summary>The "javaVersion" object of the installed version json, or null when there is none to read.</summary>
+    private static JsonElement? ReadJavaVersion(string mcVersion, string minecraftPath)
     {
         if (string.IsNullOrWhiteSpace(minecraftPath))
             return null;
@@ -122,20 +147,15 @@ public static class JavaRuntimeCatalog
 
             using var stream = File.OpenRead(path);
             using var doc = JsonDocument.Parse(stream, LenientJson);
-            if (doc.RootElement.ValueKind == JsonValueKind.Object &&
-                doc.RootElement.TryGetProperty("javaVersion", out var javaVersion) && javaVersion.ValueKind == JsonValueKind.Object &&
-                javaVersion.TryGetProperty("majorVersion", out var major) && major.ValueKind == JsonValueKind.Number &&
-                major.TryGetInt32(out int value))
-            {
-                return value;
-            }
+            return doc.RootElement.ValueKind == JsonValueKind.Object &&
+                   doc.RootElement.TryGetProperty("javaVersion", out var javaVersion) && javaVersion.ValueKind == JsonValueKind.Object
+                ? javaVersion.Clone()
+                : null;
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException)
         {
             // A broken or unreadable file just means the table decides.
             return null;
         }
-
-        return null;
     }
 }

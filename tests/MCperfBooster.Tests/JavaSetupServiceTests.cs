@@ -62,6 +62,7 @@ public class JavaSetupServiceTests : IDisposable
     private readonly string _base = TempFolders.Create("javasetup");
     private readonly string _mc;
     private readonly FakeGraalVmService _graalVm;
+    private readonly FakeGpuPreferenceStore _gpu = new();
 
     public JavaSetupServiceTests()
     {
@@ -118,7 +119,7 @@ public class JavaSetupServiceTests : IDisposable
     private Task<JavaSetupOutcome> SetUp(bool useGraalVm, bool distantHorizons = false, string mcVersion = McVersion,
         SystemProfile? system = null, IProgress<RuntimeDownloadProgress>? progress = null, CancellationToken ct = default)
     {
-        var service = new JavaSetupService(_graalVm, () => system ?? Pc);
+        var service = new JavaSetupService(_graalVm, _gpu, () => system ?? Pc);
         return service.SetUpAsync(_mc, mcVersion, useGraalVm, distantHorizons, progress, ct);
     }
 
@@ -639,7 +640,7 @@ public class JavaSetupServiceTests : IDisposable
     [Fact]
     public async Task SetUpAsync_WhenTheSystemCannotBeDetected_ReturnsAProblemInsteadOfThrowing()
     {
-        var service = new JavaSetupService(_graalVm, () => throw new InvalidOperationException("no memory info"));
+        var service = new JavaSetupService(_graalVm, _gpu, () => throw new InvalidOperationException("no memory info"));
 
         JavaSetupOutcome outcome = await service.SetUpAsync(_mc, McVersion, useGraalVm: true, distantHorizons: false);
 
@@ -796,5 +797,230 @@ public class JavaSetupServiceTests : IDisposable
         {
             File.SetAttributes(ProfilesFile, FileAttributes.Normal);
         }
+    }
+
+    // ---- The graphics card -----------------------------------------------
+
+    private const string HighPerformance = "GpuPreference=2;";
+    private const string CarriedOverNote = "Windows' graphics preference for the launcher's Java (high performance) now applies to GraalVM too.";
+
+    private string GpuRecord => Path.Combine(_graalVm.RuntimesRoot, GpuPreferenceService.RecordFileName);
+
+    private string LauncherJava(string component) =>
+        Path.Combine(_mc, "runtime", component, "windows-x64", component, "bin", "javaw.exe");
+
+    /// <summary>GraalVM 21 installs and starts; the launcher's Java 21 has the strong card picked in Windows.</summary>
+    private InstalledRuntime GraalVmWithACardToCarryOver()
+    {
+        WriteDefaultProfile();
+        var runtime = Runtime(21, "21.0.12");
+        _graalVm.OnEnsure = (_, _, _) => Installed(runtime);
+        _graalVm.OnTest = (_, _) => Ok;
+        _gpu.Settings[LauncherJava("java-runtime-delta")] = HighPerformance;
+        return runtime;
+    }
+
+    [Fact]
+    public async Task SetUpAsync_WithGraalVm_GivesItTheGraphicsCardOfTheLaunchersJava()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Equal(new JavaSetupOutcome("Oracle GraalVM 21.0.12, 4 GB of memory for Minecraft", null, CarriedOverNote), outcome);
+        Assert.Equal(HighPerformance, _gpu.Settings[runtime.JavawExe]);
+        Assert.Equal(new[] { $"set {runtime.JavawExe}" }, _gpu.Writes);
+        // The exe that got the card is exactly the one the profile starts.
+        Assert.Equal(runtime.JavawExe, Str(ReadProfile(FabricKey), "javaDir"));
+        Assert.True(File.Exists(GpuRecord));
+    }
+
+    [Fact]
+    public async Task SetUpAsync_PrefersTheCardOfTheJavaTheGameRanOnSoFar()
+    {
+        // Newest first would pick Java 25's runtime; the version json names the one 1.21.4 ran on.
+        var runtime = GraalVmWithACardToCarryOver();
+        WriteVersionJson("""{ "javaVersion": { "component": "java-runtime-delta", "majorVersion": 21 } }""");
+        _gpu.Settings[LauncherJava("java-runtime-epsilon")] = "GpuPreference=1;";
+
+        await SetUp(useGraalVm: true);
+
+        Assert.Equal(HighPerformance, _gpu.Settings[runtime.JavawExe]);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_WithoutTheGamesOwnCard_TakesTheNewestLauncherJavasCard()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+        _gpu.Settings.Clear();
+        _gpu.Settings[LauncherJava("java-runtime-gamma")] = "GpuPreference=1;";
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Equal("GpuPreference=1;", _gpu.Settings[runtime.JavawExe]);
+        Assert.Equal("Windows' graphics preference for the launcher's Java (power saving) now applies to GraalVM too.", outcome.Note);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_FindsTheCardOfTheMicrosoftStoreLaunchersJava()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+        _gpu.Settings.Clear();
+
+        // That launcher keeps its runtimes in its package folder, not in .minecraft.
+        string storeRoot = FabricService.GetMinecraftRuntimeRoots(_mc).ElementAt(1);
+        Assert.Contains("Microsoft.4297127D64EC6_8wekyb3d8bbwe", storeRoot);
+        _gpu.Settings[Path.Combine(storeRoot, "java-runtime-delta", "windows-x64", "java-runtime-delta", "bin", "javaw.exe")] = HighPerformance;
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Equal(HighPerformance, _gpu.Settings[runtime.JavawExe]);
+        Assert.Equal(CarriedOverNote, outcome.Note);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_WithoutACardPickedForTheLaunchersJava_LeavesWindowsAlone()
+    {
+        GraalVmWithACardToCarryOver();
+        _gpu.Settings[LauncherJava("java-runtime-delta")] = "AppStatus=4;";
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Empty(_gpu.Writes);
+        Assert.Null(outcome.Note);
+        Assert.False(File.Exists(GpuRecord));
+    }
+
+    [Fact]
+    public async Task SetUpAsync_KeepsACardPickedForGraalVmItself()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+        _gpu.Settings[runtime.JavawExe] = "GpuPreference=1;";
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Equal("GpuPreference=1;", _gpu.Settings[runtime.JavawExe]);
+        Assert.Empty(_gpu.Writes);
+        Assert.Null(outcome.Note);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_CarriesTheCardOverOnlyOnce()
+    {
+        GraalVmWithACardToCarryOver();
+        await SetUp(useGraalVm: true);
+
+        JavaSetupOutcome second = await SetUp(useGraalVm: true);
+
+        Assert.Null(second.Note);
+        Assert.Single(_gpu.Writes);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_WhenNoProfileRunsOnGraalVm_CarriesNoCardOver()
+    {
+        GraalVmWithACardToCarryOver();
+        WriteProfiles(Profile("other-version", "fabric-loader-0.17.2-1.20.4"));
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Equal(NoProfileProblem, outcome.Problem);
+        Assert.Null(outcome.Note);
+        Assert.Empty(_gpu.Writes);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_WhenGraalVmIsNotUsed_CarriesNoCardOver()
+    {
+        GraalVmWithACardToCarryOver();
+        _graalVm.OnEnsure = (_, _, _) => NotInstalled("Could not download GraalVM: offline.");
+
+        await SetUp(useGraalVm: true);
+
+        Assert.Empty(_gpu.Writes);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_WhenTheCardCannotBeCarriedOver_SaysSoButStillUsesGraalVm()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+        _gpu.FailSet = _ => new UnauthorizedAccessException("Access to the registry key is denied.");
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Equal("Oracle GraalVM 21.0.12, 4 GB of memory for Minecraft", outcome.Summary);
+        Assert.Null(outcome.Problem);
+        Assert.Equal(
+            "Windows' graphics preference for the launcher's Java could not be carried over to GraalVM (Access to the registry key is denied.). " +
+            $"If Minecraft runs on the wrong graphics card, pick one for {runtime.JavawExe} under Settings > System > Display > Graphics.",
+            outcome.Note);
+        Assert.Equal(runtime.JavawExe, Str(ReadProfile(FabricKey), "javaDir"));
+    }
+
+    [Fact]
+    public async Task SetUpAsync_PutsTheCardNoteAfterTheOtherNotes()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+        _graalVm.OnEnsure = (_, _, _) => Installed(runtime, notice: "Offline.");
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: true);
+
+        Assert.Equal($"Offline. {CarriedOverNote}", outcome.Note);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_SwitchedOff_TakesTheCardAwayWithGraalVm()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+        await SetUp(useGraalVm: true);
+
+        JavaSetupOutcome outcome = await SetUp(useGraalVm: false);
+
+        Assert.False(_gpu.Settings.ContainsKey(runtime.JavawExe));
+        Assert.Equal(HighPerformance, _gpu.Settings[LauncherJava("java-runtime-delta")]);
+        Assert.Null(outcome.Note);
+        Assert.False(File.Exists(GpuRecord));
+        Assert.Contains("remove-all", _graalVm.Calls);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_SwitchedOff_LeavesACardTheUserPickedForGraalVmSince()
+    {
+        var runtime = GraalVmWithACardToCarryOver();
+        await SetUp(useGraalVm: true);
+        _gpu.Settings[runtime.JavawExe] = "GpuPreference=1;";
+
+        await SetUp(useGraalVm: false);
+
+        Assert.Equal("GpuPreference=1;", _gpu.Settings[runtime.JavawExe]);
+    }
+
+    [Fact]
+    public async Task SetUpAsync_SwitchedOffButGraalVmKept_KeepsItsCard()
+    {
+        // A read-only profile file keeps pointing at GraalVM, so GraalVM stays, and so does the card it runs on.
+        var runtime = GraalVmWithACardToCarryOver();
+        await SetUp(useGraalVm: true);
+        Directory.CreateDirectory(Path.GetDirectoryName(runtime.JavawExe)!);
+        File.SetAttributes(ProfilesFile, FileAttributes.ReadOnly);
+        try
+        {
+            JavaSetupOutcome outcome = await SetUp(useGraalVm: false);
+
+            Assert.StartsWith("GraalVM was kept", outcome.Problem);
+            Assert.Equal(HighPerformance, _gpu.Settings[runtime.JavawExe]);
+            Assert.True(File.Exists(GpuRecord));
+        }
+        finally
+        {
+            File.SetAttributes(ProfilesFile, FileAttributes.Normal);
+        }
+    }
+
+    private void WriteVersionJson(string json)
+    {
+        string versionDir = Path.Combine(_mc, "versions", McVersion);
+        Directory.CreateDirectory(versionDir);
+        File.WriteAllText(Path.Combine(versionDir, $"{McVersion}.json"), json);
     }
 }

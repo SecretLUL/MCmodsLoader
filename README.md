@@ -12,7 +12,7 @@
 
 **MCperfBooster** (formerly MCmodsLoader) is a lightweight, zero-configuration utility designed for friends and casual players who want buttery-smooth Minecraft FPS without needing to learn modding, install third-party launchers, or fiddle with `.minecraft` directories.
 
-With a single click, it sets up the **Fabric Loader**, injects an essential suite of **top-tier performance and quality-of-life mods**, and runs the game on **Oracle GraalVM** with **Java arguments tuned to your PC** – all inside the official vanilla Minecraft launcher. Nothing it changes touches your graphics settings, so the game looks exactly the same, only faster.
+With a single click, it sets up the **Fabric Loader**, injects an essential suite of **top-tier performance and quality-of-life mods**, and runs the game on **Oracle GraalVM** with **Java arguments tuned to your PC** – all inside the official vanilla Minecraft launcher. Nothing it changes touches the game's graphics settings, so the game looks exactly the same, only faster.
 
 ---
 
@@ -54,7 +54,8 @@ Versions older than 1.16.5 keep the launcher's own Java. For a future Minecraft 
 
 * **Download once, small on disk:** GraalVM comes straight from `download.oracle.com` (about 300–350 MB per Java version, as Windows counts megabytes) and is checked against its SHA-256 checksum. Only the parts needed to play are unpacked, about 300 MB per version, to `%LOCALAPPDATA%\MCperfBooster\runtimes`. Only the versions you actually play are downloaded.
 * **Updates:** GraalVM 25 is updated whenever Oracle publishes a new 25.0.x build. 17.0.12 and 21.0.12 are the last builds of those versions Oracle offers for free; newer ones require a paid Oracle license, so they stay as they are.
-* **Switch it off:** Untick **Use GraalVM** under **Advanced**. The next injection puts the launcher's own Java back (with the same tuned arguments) and removes the downloaded GraalVM.
+* **Graphics card on laptops:** Windows remembers which graphics card to use per program file (Settings > System > Display > Graphics). If you picked one there for the launcher's Java, GraalVM's `javaw.exe` gets the same choice, so Minecraft stays on that card; the Java the launcher starts your Minecraft version with comes first. MCperfBooster never picks a card on its own, and a choice you made for GraalVM yourself stays as it is. A choice made only in the NVIDIA Control Panel is not carried over; since Windows 10 version 2004, the Windows setting takes precedence there anyway.
+* **Switch it off:** Untick **Use GraalVM** under **Advanced**. The next injection puts the launcher's own Java back (with the same tuned arguments) and removes the downloaded GraalVM, along with the graphics card choice it carried over to it.
 
 ### Java arguments
 
@@ -124,12 +125,13 @@ Switched on or off under **Advanced** in the app; the choice is remembered. A mo
   * `FabricService`: Probes local `launcher_profiles.json` and versions directory; runs the official Fabric CLI installer if Java is present, or falls back to direct Meta profile JSON registration; writes the Java executable and arguments into the Fabric profiles.
   * `JavaRuntimeCatalog`: Maps each Minecraft version to the Java version it needs and to the matching Oracle GraalVM build, and reads the version JSON for Minecraft versions newer than the table.
   * `GraalVmService`: Downloads, verifies (SHA-256), slims down and installs GraalVM, keeps GraalVM 25 up to date, and test-starts Java with the arguments before they are used.
+  * `GpuPreferenceService`: Carries the graphics card picked in Windows for the launcher's Java (`HKCU\Software\Microsoft\DirectX\UserGpuPreferences`) over to GraalVM, and takes it back when GraalVM is removed.
   * `JvmArguments`: Builds the Java arguments from the Java version and the PC's memory and processor count.
   * `MinecraftService`: Automatically resolves `%APPDATA%\.minecraft`, detects installed versions, and retrieves game version manifests.
   * `ModrinthService`: Asynchronous HTTP client targeting the Modrinth v2 REST API to locate primary Fabric-compatible jar releases.
   * `ModManagerService`: Inspects existing mods (reads internal `fabric.mod.json`), removes obsolete jars, and downloads updates.
   * `UpdateService`: Checks GitHub REST API for new releases, verifies the downloaded executable (PE header and the release asset's SHA-256 digest), and swaps it in by renaming the running executable to `<name>.old.exe`, which the new build deletes on startup.
-* **Testing:** xUnit test suite (`MCperfBooster.Tests`) covering version parsing, zip metadata inspection, mod presets, directory validation, the GraalVM installer and the Java arguments.
+* **Testing:** xUnit test suite (`MCperfBooster.Tests`) covering version parsing, zip metadata inspection, mod presets, directory validation, the GraalVM installer, the Java arguments and the graphics card carry-over.
 
 ---
 

@@ -404,6 +404,35 @@ public class FabricService : IFabricService
             yield return Path.Combine(programFilesX86, "Minecraft Launcher", "runtime");
     }
 
+    /// <summary>
+    /// Where the javaw.exe of each Java runtime the launcher downloads sits, in every folder
+    /// <see cref="GetMinecraftRuntimeRoots"/> names: those of <paramref name="firstComponent"/> first, then the
+    /// others newest first. Whether the files exist is not looked at: Windows keeps its settings by path.
+    /// </summary>
+    internal static IEnumerable<string> GetLauncherJavawPaths(string minecraftPath, string? firstComponent = null)
+    {
+        var components = new List<string>();
+        if (!string.IsNullOrEmpty(firstComponent))
+            components.Add(firstComponent);
+        components.AddRange(KnownRuntimeComponents.Where(component => !component.Equals(firstComponent, StringComparison.OrdinalIgnoreCase)));
+
+        var roots = new List<string>();
+        foreach (string root in GetMinecraftRuntimeRoots(minecraftPath))
+        {
+            if (TryFullPath(root, out string? fullRoot))
+                roots.Add(fullRoot);
+        }
+
+        foreach (string component in components)
+        {
+            foreach (string root in roots)
+            {
+                foreach (string platform in RuntimePlatforms)
+                    yield return Path.Combine(root, component, platform, component, "bin", "javaw.exe");
+            }
+        }
+    }
+
     private static bool TryFullPath(string? path, [System.Diagnostics.CodeAnalysis.NotNullWhen(true)] out string? fullPath)
     {
         fullPath = null;
