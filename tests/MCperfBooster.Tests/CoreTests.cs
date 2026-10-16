@@ -1216,7 +1216,12 @@ public class FabricServiceTests : IDisposable
         string json = File.ReadAllText(profilesFile);
         Assert.Contains("fabric-loader-1.21.1", json);
         Assert.Contains(versionId, json);
-        Assert.Contains("-Xmx4G", json);
+
+        // The memory settings are sized for the PC the app runs on (1.21.1 runs on Java 21).
+        using var doc = JsonDocument.Parse(json);
+        Assert.Equal(
+            JvmArguments.Build(21, graalVm: false, JvmArguments.DetectSystem(), distantHorizons: false),
+            doc.RootElement.GetProperty("profiles").GetProperty("fabric-loader-1.21.1").GetProperty("javaArgs").GetString());
     }
 
     [Fact]

@@ -91,3 +91,17 @@ public sealed record ModrinthDependency(string? ProjectId, string? VersionId, st
 public sealed record ModrinthProject(string Id, string Slug, string Title, IReadOnlyList<string>? Loaders = null);
 
 public sealed record ModIssue(string ModName, string Reason);
+
+/// <summary>
+/// One downloadable Oracle GraalVM JDK (Windows x64). The checksum is either pinned here
+/// (builds that no longer receive updates) or published next to the download at
+/// <see cref="ChecksumUrl"/>; the version is either known up front or read from the
+/// unpacked "release" file.
+/// </summary>
+public sealed record GraalVmBuild(
+    int JavaMajor,
+    string DownloadUrl,
+    string? PinnedSha256,
+    string? ChecksumUrl,
+    string? FixedVersion,
+    int ApproximateDownloadMegabytes);

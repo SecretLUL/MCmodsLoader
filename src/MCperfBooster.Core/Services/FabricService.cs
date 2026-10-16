@@ -300,9 +300,10 @@ public class FabricService : IFabricService
         return false;
     }
 
+    // Newest first. Epsilon is the launcher's Java 25.
     private static readonly string[] KnownRuntimeComponents =
     {
-        "java-runtime-delta", "java-runtime-gamma", "java-runtime-beta", "java-runtime-alpha", "jre-legacy"
+        "java-runtime-epsilon", "java-runtime-delta", "java-runtime-gamma", "java-runtime-beta", "java-runtime-alpha", "jre-legacy"
     };
 
     private static readonly string[] RuntimePlatforms = { "windows-x64", "windows" };
@@ -558,10 +559,31 @@ public class FabricService : IFabricService
         }
     }
 
-    public static void RegisterProfileInLauncher(string minecraftPath, string mcVersion, string versionId)
+    // What the launcher itself puts in a new profile.
+    private const string LauncherDefaultJavaArgs = "-Xmx2G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M";
+
+    private static readonly string[] ProfileFileNames = { "launcher_profiles.json", "launcher_profiles_microsoft_store.json" };
+
+    private static readonly JsonSerializerOptions ProfileWriteOptions = new()
+    {
+        WriteIndented = true,
+        Encoder = System.Text.Encodings.Web.JavaScriptEncoder.UnsafeRelaxedJsonEscaping
+    };
+
+    public static void RegisterProfileInLauncher(string minecraftPath, string mcVersion, string versionId) =>
+        RegisterProfileInLauncher(minecraftPath, mcVersion, versionId, JvmArguments.DetectSystem());
+
+    /// <param name="system">What a new profile's memory settings are sized for.</param>
+    internal static void RegisterProfileInLauncher(string minecraftPath, string mcVersion, string versionId, SystemProfile system)
     {
         string defaultProfilesFile = Path.Combine(minecraftPath, "launcher_profiles.json");
         string msStoreProfilesFile = Path.Combine(minecraftPath, "launcher_profiles_microsoft_store.json");
+
+        // Only a profile created here gets these; an existing one keeps what its owner chose. Games older
+        // than the table covers (before 1.16.5) keep the launcher's own defaults.
+        string newProfileJavaArgs = JavaRuntimeCatalog.GetJavaMajor(mcVersion) is int javaMajor
+            ? JvmArguments.Build(javaMajor, graalVm: false, system, distantHorizons: false)
+            : LauncherDefaultJavaArgs;
 
         // If neither file exists, create a default launcher_profiles.json
         if (!File.Exists(defaultProfilesFile) && !File.Exists(msStoreProfilesFile))
@@ -653,7 +675,7 @@ public class FabricService : IFabricService
                     }
                     else
                     {
-                        // Create brand-new profile with high-FPS recommended memory settings
+                        // Create brand-new profile with memory settings sized for this PC
                         var newProfile = new JsonObject
                         {
                             ["created"] = nowIso,
@@ -662,7 +684,7 @@ public class FabricService : IFabricService
                             ["lastVersionId"] = versionId,
                             ["name"] = $"Fabric {mcVersion}",
                             ["type"] = "custom",
-                            ["javaArgs"] = "-Xmx4G -XX:+UnlockExperimentalVMOptions -XX:+UseG1GC -XX:G1NewSizePercent=20 -XX:G1ReservePercent=20 -XX:MaxGCPauseMillis=50 -XX:G1HeapRegionSize=32M"
+                            ["javaArgs"] = newProfileJavaArgs
                         };
 
                         // Our key may now hold the user's non-Fabric profile; leave it be.
@@ -691,6 +713,160 @@ public class FabricService : IFabricService
             }
         }
     }
+
+    /// <summary>
+    /// Sets the Java arguments and the Java executable (<paramref name="javaExecutable"/> is the path to
+    /// javaw.exe; null removes the setting, so the launcher uses its own Java again) on every Fabric profile of
+    /// this game version. Profiles with a game folder of their own belong to another modpack and are left alone.
+    /// Returns how many profiles actually changed, over both launcher profile files; a file that cannot be
+    /// read or written is skipped.
+    /// </summary>
+    public static int ApplyJavaSettings(string minecraftPath, string mcVersion, string? javaExecutable, string javaArgs)
+    {
+        return EditProfiles(minecraftPath, profile =>
+        {
+            if (ReadString(profile, "lastVersionId") is not { } versionId || ExtractLoaderVersion(versionId, mcVersion) == null)
+                return false;
+
+            if (ReadString(profile, "gameDir") is { Length: > 0 } gameDir && !IsSamePath(gameDir, minecraftPath))
+                return false;
+
+            bool changed = SetString(profile, "javaArgs", javaArgs);
+            if (javaExecutable != null)
+                changed |= SetString(profile, "javaDir", javaExecutable);
+            else
+                changed |= profile.Remove("javaDir");
+
+            return changed;
+        });
+    }
+
+    /// <summary>
+    /// Takes the profiles off a runtime this app installed, before that runtime is deleted: removes the Java
+    /// executable of every profile that points below <paramref name="runtimesRoot"/> and, where
+    /// <paramref name="argsForGameVersion"/> has arguments for the profile's game version, puts them in place of
+    /// the Java arguments (they were tuned for that runtime). Returns how many profiles changed.
+    /// </summary>
+    public static int DetachRuntimes(string minecraftPath, string runtimesRoot, Func<string, string?> argsForGameVersion)
+    {
+        return EditProfiles(minecraftPath, profile =>
+        {
+            if (ReadString(profile, "javaDir") is not { Length: > 0 } javaDir || !IsPathBelow(javaDir, runtimesRoot))
+                return false;
+
+            profile.Remove("javaDir");
+            if (ReadString(profile, "lastVersionId") is { } versionId && FindFabricJavaArgs(versionId, argsForGameVersion) is { } javaArgs)
+                SetString(profile, "javaArgs", javaArgs);
+
+            return true;
+        });
+    }
+
+    /// <summary>
+    /// Runs <paramref name="edit"/> on every profile in the launcher profile files and rewrites a file only
+    /// when it reported a change. Returns the number of profiles changed in files that were written.
+    /// </summary>
+    private static int EditProfiles(string minecraftPath, Func<JsonObject, bool> edit)
+    {
+        int changedProfiles = 0;
+        foreach (string fileName in ProfileFileNames)
+        {
+            string file = Path.Combine(minecraftPath, fileName);
+            if (!File.Exists(file))
+                continue;
+
+            try
+            {
+                JsonObject? rootObj;
+                using (var stream = File.OpenRead(file))
+                {
+                    rootObj = JsonNode.Parse(stream, documentOptions: LenientJson) as JsonObject;
+                }
+
+                if (rootObj?["profiles"] is not JsonObject profiles)
+                    continue;
+
+                int changedHere = 0;
+                foreach (var entry in profiles)
+                {
+                    if (entry.Value is JsonObject profile && edit(profile))
+                        changedHere++;
+                }
+
+                if (changedHere == 0)
+                    continue;
+
+                // Atomic, so a crash mid-write cannot corrupt the user's profiles.
+                AtomicFile.WriteAllText(file, rootObj.ToJsonString(ProfileWriteOptions));
+                changedProfiles += changedHere;
+            }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or JsonException or ArgumentException or InvalidOperationException)
+            {
+                // This file cannot be read or written; the other one may still work.
+                continue;
+            }
+        }
+
+        return changedProfiles;
+    }
+
+    /// <summary>
+    /// Arguments for the game version of a "fabric-loader-&lt;loader&gt;-&lt;mc&gt;" id. Loader and game version can
+    /// both contain dashes ("0.20.0-beta.2", "26.3-pre-2"), so every split is tried, the longest game version first.
+    /// </summary>
+    private static string? FindFabricJavaArgs(string versionId, Func<string, string?> argsForGameVersion)
+    {
+        if (!versionId.StartsWith(FabricLoaderPrefix, StringComparison.OrdinalIgnoreCase))
+            return null;
+
+        string rest = versionId[FabricLoaderPrefix.Length..];
+        for (int dash = rest.IndexOf('-'); dash >= 0; dash = rest.IndexOf('-', dash + 1))
+        {
+            if (argsForGameVersion(rest[(dash + 1)..]) is { } args)
+                return args;
+        }
+
+        return null;
+    }
+
+    private static string? ReadString(JsonObject obj, string property) =>
+        obj[property] is JsonValue value && value.TryGetValue<string>(out string? text) ? text : null;
+
+    private static bool SetString(JsonObject obj, string property, string value)
+    {
+        if (ReadString(obj, property) == value)
+            return false;
+
+        obj[property] = value;
+        return true;
+    }
+
+    private static bool IsSamePath(string a, string b)
+    {
+        try
+        {
+            return string.Equals(TrimmedFullPath(a), TrimmedFullPath(b), StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static bool IsPathBelow(string path, string folder)
+    {
+        try
+        {
+            return Path.GetFullPath(path).StartsWith(TrimmedFullPath(folder) + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
+        {
+            return false;
+        }
+    }
+
+    private static string TrimmedFullPath(string path) =>
+        Path.GetFullPath(path).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
 }
 
 internal sealed record ProcessResult(int ExitCode, string StandardOutput, string StandardError, bool TimedOut);

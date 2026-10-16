@@ -20,6 +20,12 @@ public sealed class AppSettings
 
     public void SetOptionalModEnabled(string slug, bool enabled) => _optionalMods[slug] = enabled;
 
+    /// <summary>Whether Minecraft runs on a GraalVM the app downloads, instead of the launcher's own Java.</summary>
+    public bool UseGraalVm { get; set; } = true;
+
+    /// <summary>Whether the user has agreed to that download (it is large and under Oracle's license).</summary>
+    public bool GraalVmConsentGiven { get; set; }
+
     /// <summary>
     /// Whether an optional mod is on: the user's own choice if there is one; otherwise on if its jar is already in
     /// the mods folder (someone installed it, so it is kept up to date from now on) or if the pack turns it on by
@@ -37,7 +43,11 @@ public sealed class AppSettings
     /// <summary>A copy to read on another thread while this one may still change.</summary>
     public AppSettings Clone()
     {
-        var copy = new AppSettings();
+        var copy = new AppSettings
+        {
+            UseGraalVm = UseGraalVm,
+            GraalVmConsentGiven = GraalVmConsentGiven,
+        };
         foreach (var (slug, enabled) in _optionalMods)
         {
             copy._optionalMods[slug] = enabled;
@@ -82,6 +92,17 @@ public sealed class AppSettings
                     settings._optionalMods[slug] = legacy.GetBoolean();
                 }
             }
+
+            // Files from before GraalVM have neither key and keep the defaults.
+            if (root.TryGetProperty("useGraalVm", out var useGraalVm) && useGraalVm.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                settings.UseGraalVm = useGraalVm.GetBoolean();
+            }
+
+            if (root.TryGetProperty("graalVmConsent", out var consent) && consent.ValueKind is JsonValueKind.True or JsonValueKind.False)
+            {
+                settings.GraalVmConsentGiven = consent.GetBoolean();
+            }
         }
         catch
         {
@@ -105,6 +126,8 @@ public sealed class AppSettings
                     writer.WriteBoolean(slug, enabled);
                 }
                 writer.WriteEndObject();
+                writer.WriteBoolean("useGraalVm", UseGraalVm);
+                writer.WriteBoolean("graalVmConsent", GraalVmConsentGiven);
                 writer.WriteEndObject();
             }
 
